@@ -1,0 +1,341 @@
+---
+apiVersion: apiextensions.k8s.io/v1beta1
+kind: CustomResourceDefinition
+metadata:
+  labels:
+    component: velero
+  name: backups.velero.io
+spec:
+  group: velero.io
+  names:
+    kind: Backup
+    listKind: BackupList
+    plural: backups
+    singular: backup
+  scope: Namespaced
+  version: v1
+  versions:
+  - name: v1
+    served: true
+    storage: true
+
+---
+apiVersion: apiextensions.k8s.io/v1beta1
+kind: CustomResourceDefinition
+metadata:
+  labels:
+    component: velero
+  name: backupstoragelocations.velero.io
+spec:
+  group: velero.io
+  names:
+    kind: BackupStorageLocation
+    listKind: BackupStorageLocationList
+    plural: backupstoragelocations
+    singular: backupstoragelocation
+  scope: Namespaced
+  version: v1
+  versions:
+  - name: v1
+    served: true
+    storage: true
+
+---
+apiVersion: apiextensions.k8s.io/v1beta1
+kind: CustomResourceDefinition
+metadata:
+  labels:
+    component: velero
+  name: deletebackuprequests.velero.io
+spec:
+  group: velero.io
+  names:
+    kind: DeleteBackupRequest
+    listKind: DeleteBackupRequestList
+    plural: deletebackuprequests
+    singular: deletebackuprequest
+  scope: Namespaced
+  version: v1
+  versions:
+  - name: v1
+    served: true
+    storage: true
+
+---
+apiVersion: apiextensions.k8s.io/v1beta1
+kind: CustomResourceDefinition
+metadata:
+  labels:
+    component: velero
+  name: downloadrequests.velero.io
+spec:
+  group: velero.io
+  names:
+    kind: DownloadRequest
+    listKind: DownloadRequestList
+    plural: downloadrequests
+    singular: downloadrequest
+  scope: Namespaced
+  version: v1
+  versions:
+  - name: v1
+    served: true
+    storage: true
+
+---
+apiVersion: apiextensions.k8s.io/v1beta1
+kind: CustomResourceDefinition
+metadata:
+  labels:
+    component: velero
+  name: podvolumebackups.velero.io
+spec:
+  group: velero.io
+  names:
+    kind: PodVolumeBackup
+    listKind: PodVolumeBackupList
+    plural: podvolumebackups
+    singular: podvolumebackup
+  scope: Namespaced
+  version: v1
+  versions:
+  - name: v1
+    served: true
+    storage: true
+
+---
+apiVersion: apiextensions.k8s.io/v1beta1
+kind: CustomResourceDefinition
+metadata:
+  labels:
+    component: velero
+  name: podvolumerestores.velero.io
+spec:
+  group: velero.io
+  names:
+    kind: PodVolumeRestore
+    listKind: PodVolumeRestoreList
+    plural: podvolumerestores
+    singular: podvolumerestore
+  scope: Namespaced
+  version: v1
+  versions:
+  - name: v1
+    served: true
+    storage: true
+
+---
+apiVersion: apiextensions.k8s.io/v1beta1
+kind: CustomResourceDefinition
+metadata:
+  labels:
+    component: velero
+  name: resticrepositories.velero.io
+spec:
+  group: velero.io
+  names:
+    kind: ResticRepository
+    listKind: ResticRepositoryList
+    plural: resticrepositories
+    singular: resticrepository
+  scope: Namespaced
+  version: v1
+  versions:
+  - name: v1
+    served: true
+    storage: true
+
+---
+apiVersion: apiextensions.k8s.io/v1beta1
+kind: CustomResourceDefinition
+metadata:
+  labels:
+    component: velero
+  name: restores.velero.io
+spec:
+  group: velero.io
+  names:
+    kind: Restore
+    listKind: RestoreList
+    plural: restores
+    singular: restore
+  scope: Namespaced
+  version: v1
+  versions:
+  - name: v1
+    served: true
+    storage: true
+
+---
+apiVersion: apiextensions.k8s.io/v1beta1
+kind: CustomResourceDefinition
+metadata:
+  labels:
+    component: velero
+  name: schedules.velero.io
+spec:
+  group: velero.io
+  names:
+    kind: Schedule
+    listKind: ScheduleList
+    plural: schedules
+    singular: schedule
+  scope: Namespaced
+  version: v1
+  versions:
+  - name: v1
+    served: true
+    storage: true
+
+---
+apiVersion: apiextensions.k8s.io/v1beta1
+kind: CustomResourceDefinition
+metadata:
+  labels:
+    component: velero
+  name: serverstatusrequests.velero.io
+spec:
+  group: velero.io
+  names:
+    kind: ServerStatusRequest
+    listKind: ServerStatusRequestList
+    plural: serverstatusrequests
+    singular: serverstatusrequest
+  scope: Namespaced
+  version: v1
+  versions:
+  - name: v1
+    served: true
+    storage: true
+
+---
+apiVersion: apiextensions.k8s.io/v1beta1
+kind: CustomResourceDefinition
+metadata:
+  labels:
+    component: velero
+  name: volumesnapshotlocations.velero.io
+spec:
+  group: velero.io
+  names:
+    kind: VolumeSnapshotLocation
+    listKind: VolumeSnapshotLocationList
+    plural: volumesnapshotlocations
+    singular: volumesnapshotlocation
+  scope: Namespaced
+  version: v1
+  versions:
+  - name: v1
+    served: true
+    storage: true
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  namespace: velero
+  name: velero
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  labels:
+    component: velero
+  name: velero
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+- kind: ServiceAccount
+  name: velero
+  namespace: velero
+
+---
+apiVersion: velero.io/v1
+kind: BackupStorageLocation
+metadata:
+  labels:
+    component: velero
+  name: default
+  namespace: velero
+spec:
+  config: {}
+  objectStorage:
+    bucket: <BUCKET>
+    prefix: ""
+  provider: alibabacloud
+
+---
+apiVersion: velero.io/v1
+kind: VolumeSnapshotLocation
+metadata:
+  labels:
+    component: velero
+  name: default
+  namespace: velero
+spec:
+  config:
+    region: <REGION>
+  provider: alibabacloud
+
+---
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: velero
+  namespace: velero
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      deploy: velero
+  template:
+    metadata:
+      annotations:
+        prometheus.io/path: /metrics
+        prometheus.io/port: "8085"
+        prometheus.io/scrape: "true"
+      labels:
+        component: velero
+        deploy: velero
+    spec:
+      serviceAccountName: velero
+      containers:
+      - name: velero
+        # sync from gcr.io/heptio-images/velero:latest
+        image: registry.cn-hangzhou.aliyuncs.com/acs/velero:latest
+        imagePullPolicy: IfNotPresent
+        command:
+          - /velero
+        args:
+          - server
+          - --default-volume-snapshot-locations=alibabacloud:default
+        env:
+          - name: VELERO_SCRATCH_DIR
+            value: /scratch
+          - name: ALIBABA_CLOUD_CREDENTIALS_FILE
+            value: /credentials/cloud
+        volumeMounts:
+          - mountPath: /plugins
+            name: plugins
+          - mountPath: /scratch
+            name: scratch
+          - mountPath: /credentials
+            name: cloud-credentials
+      initContainers:
+      - image: registry.cn-hangzhou.aliyuncs.com/acs/velero-plugin-alibabacloud:v1
+        imagePullPolicy: IfNotPresent
+        name: velero-plugin-alibabacloud
+        volumeMounts:
+        - mountPath: /target
+          name: plugins
+      volumes:
+        - emptyDir: {}
+          name: plugins
+        - emptyDir: {}
+          name: scratch
+        - name: cloud-credentials
+          secret:
+            secretName: cloud-credentials
