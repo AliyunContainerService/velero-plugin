@@ -296,10 +296,10 @@ func getEBSDiskID(pv *v1.PersistentVolume) (string, error) {
 			return "", err
 		}
 		options := pv.Spec.FlexVolume.Options
-		if options == nil || options["volumeId"] == "" {
-			return "", errors.New("spec.FlexVolume.Options['volumeId'] not found")
+		if options == nil || options["VolumeId"] == "" {
+			return "", errors.New("spec.FlexVolume.Options['VolumeId'] not found")
 		}
-		return options["volumeId"], nil
+		return options["VolumeId"], nil
 	}
 	return "", nil
 }
@@ -323,7 +323,7 @@ func setEBSDiskID(pv *v1.PersistentVolume, diskID string) error {
 			options = map[string]string{}
 			pv.Spec.FlexVolume.Options = options
 		}
-		options["volumeId"] = diskID
+		options["VolumeId"] = diskID
 		return nil
 	}
 

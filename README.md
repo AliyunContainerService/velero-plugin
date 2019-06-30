@@ -125,6 +125,15 @@ For more information, see [the AlibabaCloud documentation on RAM users guides][1
 	kubectl apply -f install/velero.yaml
 	```
 	
+4. Cleanup velero installation
+
+	Run the following command to cleanup the velero installation
+	
+	```
+	kubectl delete namespace/velero clusterrolebinding/velero
+	kubectl delete crds -l component=velero
+	```
+	
 ## Installing the nginx example (optional)
 
 1. nginx example without persistent volumes
