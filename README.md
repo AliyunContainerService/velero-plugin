@@ -160,7 +160,7 @@ For more information, see [the AlibabaCloud documentation on RAM users guides][1
 
 	```
 	VOLUME_ID=<YOUR_ECS_DISK_ID>
-	sed -i "s#{PV_NAME}#$VOLUME_ID#" examples/with-pv.yaml`
+	sed -i "s#<PV_NAME>#$VOLUME_ID#" examples/with-pv.yaml
 	kubectl apply -f examples/with-pv.yaml
 	```
 	
