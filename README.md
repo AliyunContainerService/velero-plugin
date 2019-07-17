@@ -120,9 +120,13 @@ For more information, see [the AlibabaCloud documentation on RAM users guides][1
 	Run the following command to create and run velero and velero-plugin for alibabacloud
 	
 	```
-	sed -i "s#<BUCKET>#$BUCKET#" install/velero.yaml
-	sed -i "s#<REGION>#$REGION#" install/velero.yaml
-	kubectl apply -f install/velero.yaml
+	kubectl apply -f install/00-crds.yaml
+	```
+  
+	```
+	sed -i "s#<BUCKET>#$BUCKET#" install/01-velero.yaml
+	sed -i "s#<REGION>#$REGION#" install/01-velero.yaml
+	kubectl apply -f install/01-velero.yaml
 	```
 	
 4. Cleanup velero installation
