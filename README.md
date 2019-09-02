@@ -149,7 +149,7 @@ For more information, see [the AlibabaCloud documentation on RAM users guides][1
 	
 	Create a backup:
 	
-	`velero backup create nginx-backup --include-namespaces nginx-example`
+	`velero backup create nginx-backup --include-namespaces nginx-example --wait`
 	
 	Destroy the nginx example:
 	
@@ -157,32 +157,29 @@ For more information, see [the AlibabaCloud documentation on RAM users guides][1
 	
 	Create a restore from nginx-backup:
 	
-	`velero  restore create --from-backup nginx-backup`
+	`velero  restore create --from-backup nginx-backup --wait`
 
 2. nginx example with persistent volumes
 
 	Run the following command to create a nginx example with persistent volumes:
 
 	```
-	VOLUME_ID=<YOUR_ECS_DISK_ID>
-	sed -i "s#<PV_NAME>#$VOLUME_ID#" examples/with-pv.yaml
 	kubectl apply -f examples/with-pv.yaml
 	```
 	
 	Create a backup:
 	
-	`velero backup create nginx-backup-volume --snapshot-volumes --include-namespaces nginx-example`
+	`velero backup create nginx-backup-volume --include-namespaces nginx-example --wait`
 	
 	Destroy the nginx example:
 	
 	```
 	kubectl delete namespaces nginx-example
-	kubectl delete pv $(kubectl get pv|grep nginx-example/nginx-logs|cut -d ' ' -f1)
 	```
 	
 	Create a restore from nginx-backup-volume:
 	
-	`velero  restore create --from-backup nginx-backup-volume --restore-volumes`
+	`velero  restore create --from-backup nginx-backup-volume --wait`
 	
 
 [14]: https://www.alibabacloud.com/help/doc-detail/28645.htm
