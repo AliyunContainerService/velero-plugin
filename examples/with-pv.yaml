@@ -22,33 +22,8 @@ metadata:
 
 ---
 apiVersion: v1
-kind: PersistentVolume
-metadata:
-  annotations:
-    pv.kubernetes.io/bound-by-controller: "yes"
-  labels:
-    alicloud-pvname: <PV_NAME>
-  name: <PV_NAME>
-  namespace: nginx-example
-spec:
-  accessModes:
-  - ReadWriteOnce
-  capacity:
-    storage: 20Gi
-  flexVolume:
-    driver: alicloud/disk
-    fsType: ext4
-    options:
-      volumeId: <PV_NAME>
-  storageClassName: disk
-
----
-apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  annotations:
-    pv.kubernetes.io/bind-completed: "yes"
-    pv.kubernetes.io/bound-by-controller: "yes"
   name: nginx-logs
   namespace: nginx-example
 spec:
@@ -57,11 +32,7 @@ spec:
   resources:
     requests:
       storage: 20Gi
-  selector:
-    matchLabels:
-      alicloud-pvname: <PV_NAME>
-  storageClassName: disk
-  volumeName: <PV_NAME>
+  storageClassName: alicloud-disk-ssd
 
 ---
 apiVersion: apps/v1beta1
