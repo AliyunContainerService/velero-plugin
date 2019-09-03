@@ -41,8 +41,8 @@
     "services/ecs",
   ]
   pruneopts = "NUT"
-  revision = "02bfe7fbce66b3b7cd16b8640a95b5316e5ab4ed"
-  version = "1.60.131"
+  revision = "7a807875136654e7ca7fcdd5511cd72b14cc25ba"
+  version = "1.60.132"
 
 [[projects]]
   digest = "1:918521e77b229a961b2011082ee9c026d5077cab825be142f6e9771b61d03238"
@@ -77,15 +77,15 @@
   version = "v4.5.0"
 
 [[projects]]
-  digest = "1:a1b2a5e38f79688ee8250942d5fa960525fceb1024c855c7bc76fa77b0f3cca2"
+  digest = "1:633dde05baa7afd3544cfe4ac16fe3c5450b868cfc6b1558621ee39ebf2273ea"
   name = "github.com/gogo/protobuf"
   packages = [
     "proto",
     "sortkeys",
   ]
   pruneopts = "NUT"
-  revision = "ba06b47c162d49f2af050fb4c75bcbc86a159d5c"
-  version = "v1.2.1"
+  revision = "0ca988a254f991240804bf9821f3450d87ccbb1b"
+  version = "v1.3.0"
 
 [[projects]]
   digest = "1:796f9c63c68774a89eade387a8476e45ec2b34f5649b0726983204202c3649d6"
@@ -378,14 +378,14 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:25afefcce84027a47ec93143dba3fd60e4d0e7b66ada0e16b0b54b7fafc5091c"
+  digest = "1:3589c63c3a3f0a6236ad09f8b227a2c4b28791001d4b934e8f33ac8b107391ef"
   name = "golang.org/x/sys"
   packages = [
     "unix",
     "windows",
   ]
   pruneopts = "NUT"
-  revision = "19e00faab6ad547203cd66b19e1281807329cf65"
+  revision = "9109b7679e13aa34a54834cfb4949cac4b96e576"
 
 [[projects]]
   digest = "1:8d8faad6b12a3a4c819a3f9618cb6ee1fa1cfc33253abeeea8b55336721e3405"
