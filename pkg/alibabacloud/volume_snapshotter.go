@@ -50,7 +50,7 @@ func NewVolumeSnapshotter(logger logrus.FieldLogger) *VolumeSnapshotter {
 
 // Init init ecs client with os env
 func (b *VolumeSnapshotter) Init(config map[string]string) error {
-	if err := cloudprovider.ValidateVolumeSnapshotterConfigKeys(config, regionKey); err != nil {
+	if err := cloudprovider.ValidateVolumeSnapshotterConfigKeys(config, RegionKey); err != nil {
 		return err
 	}
 
@@ -58,9 +58,9 @@ func (b *VolumeSnapshotter) Init(config map[string]string) error {
 		return err
 	}
 
-	region := config[regionKey]
+	region := config[RegionKey]
 	if region == "" {
-		return errors.Errorf("missing %s in Alibaba Cloud configuration", regionKey)
+		return errors.Errorf("missing %s in Alibaba Cloud configuration", RegionKey)
 	}
 
 	accessKeyID := os.Getenv("ALIBABA_CLOUD_ACCESS_KEY_ID")
@@ -296,10 +296,14 @@ func getEBSDiskID(pv *v1.PersistentVolume) (string, error) {
 			return "", err
 		}
 		options := pv.Spec.FlexVolume.Options
-		if options == nil || options["VolumeId"] == "" {
-			return "", errors.New("spec.FlexVolume.Options['VolumeId'] not found")
+		if options == nil || (options["VolumeId"] == "" && options["volumeId"] == "") {
+			return "", errors.New("spec.FlexVolume.Options['VolumeId'] or spec.FlexVolume.Options['volumeId'] not found")
+		} else if options["VolumeId"] != "" {
+			return options["VolumeId"], nil
+		} else {
+			return options["volumeId"], nil
 		}
-		return options["VolumeId"], nil
+
 	}
 	return "", nil
 }
