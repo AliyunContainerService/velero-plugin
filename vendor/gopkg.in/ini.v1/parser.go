@@ -27,29 +27,25 @@ import (
 
 var pythonMultiline = regexp.MustCompile("^(\\s+)([^\n]+)")
 
-type parserOptions struct {
-	IgnoreContinuation          bool
-	IgnoreInlineComment         bool
-	AllowPythonMultilineValues  bool
-	SpaceBeforeInlineComment    bool
-	UnescapeValueDoubleQuotes   bool
-	UnescapeValueCommentSymbols bool
-	PreserveSurroundedQuote     bool
-}
+type tokenType int
+
+const (
+	_TOKEN_INVALID tokenType = iota
+	_TOKEN_COMMENT
+	_TOKEN_SECTION
+	_TOKEN_KEY
+)
 
 type parser struct {
 	buf     *bufio.Reader
-	options parserOptions
-
 	isEOF   bool
 	count   int
 	comment *bytes.Buffer
 }
 
-func newParser(r io.Reader, opts parserOptions) *parser {
+func newParser(r io.Reader) *parser {
 	return &parser{
 		buf:     bufio.NewReader(r),
-		options: opts,
 		count:   1,
 		comment: &bytes.Buffer{},
 	}
@@ -200,13 +196,12 @@ func hasSurroundedQuote(in string, quote byte) bool {
 		strings.IndexByte(in[1:], quote) == len(in)-2
 }
 
-func (p *parser) readValue(in []byte, bufferSize int) (string, error) {
+func (p *parser) readValue(in []byte,
+	parserBufferSize int,
+	ignoreContinuation, ignoreInlineComment, unescapeValueDoubleQuotes, unescapeValueCommentSymbols, allowPythonMultilines, spaceBeforeInlineComment, preserveSurroundedQuote bool) (string, error) {
 
 	line := strings.TrimLeftFunc(string(in), unicode.IsSpace)
 	if len(line) == 0 {
-		if p.options.AllowPythonMultilineValues && len(in) > 0 && in[len(in)-1] == '\n' {
-			return p.readPythonMultilines(line, bufferSize)
-		}
 		return "", nil
 	}
 
@@ -215,7 +210,7 @@ func (p *parser) readValue(in []byte, bufferSize int) (string, error) {
 		valQuote = `"""`
 	} else if line[0] == '`' {
 		valQuote = "`"
-	} else if p.options.UnescapeValueDoubleQuotes && line[0] == '"' {
+	} else if unescapeValueDoubleQuotes && line[0] == '"' {
 		valQuote = `"`
 	}
 
@@ -227,7 +222,7 @@ func (p *parser) readValue(in []byte, bufferSize int) (string, error) {
 			return p.readMultilines(line, line[startIdx:], valQuote)
 		}
 
-		if p.options.UnescapeValueDoubleQuotes && valQuote == `"` {
+		if unescapeValueDoubleQuotes && valQuote == `"` {
 			return strings.Replace(line[startIdx:pos+startIdx], `\"`, `"`, -1), nil
 		}
 		return line[startIdx : pos+startIdx], nil
@@ -239,14 +234,14 @@ func (p *parser) readValue(in []byte, bufferSize int) (string, error) {
 	trimmedLastChar := line[len(line)-1]
 
 	// Check continuation lines when desired
-	if !p.options.IgnoreContinuation && trimmedLastChar == '\\' {
+	if !ignoreContinuation && trimmedLastChar == '\\' {
 		return p.readContinuationLines(line[:len(line)-1])
 	}
 
 	// Check if ignore inline comment
-	if !p.options.IgnoreInlineComment {
+	if !ignoreInlineComment {
 		var i int
-		if p.options.SpaceBeforeInlineComment {
+		if spaceBeforeInlineComment {
 			i = strings.Index(line, " #")
 			if i == -1 {
 				i = strings.Index(line, " ;")
@@ -265,75 +260,65 @@ func (p *parser) readValue(in []byte, bufferSize int) (string, error) {
 
 	// Trim single and double quotes
 	if (hasSurroundedQuote(line, '\'') ||
-		hasSurroundedQuote(line, '"')) && !p.options.PreserveSurroundedQuote {
+		hasSurroundedQuote(line, '"')) && !preserveSurroundedQuote {
 		line = line[1 : len(line)-1]
-	} else if len(valQuote) == 0 && p.options.UnescapeValueCommentSymbols {
+	} else if len(valQuote) == 0 && unescapeValueCommentSymbols {
 		if strings.Contains(line, `\;`) {
 			line = strings.Replace(line, `\;`, ";", -1)
 		}
 		if strings.Contains(line, `\#`) {
 			line = strings.Replace(line, `\#`, "#", -1)
 		}
-	} else if p.options.AllowPythonMultilineValues && lastChar == '\n' {
-		return p.readPythonMultilines(line, bufferSize)
+	} else if allowPythonMultilines && lastChar == '\n' {
+		parserBufferPeekResult, _ := p.buf.Peek(parserBufferSize)
+		peekBuffer := bytes.NewBuffer(parserBufferPeekResult)
+
+		val := line
+
+		for {
+			peekData, peekErr := peekBuffer.ReadBytes('\n')
+			if peekErr != nil {
+				if peekErr == io.EOF {
+					return val, nil
+				}
+				return "", peekErr
+			}
+
+			peekMatches := pythonMultiline.FindStringSubmatch(string(peekData))
+			if len(peekMatches) != 3 {
+				return val, nil
+			}
+
+			// NOTE: Return if not a python-ini multi-line value.
+			currentIdentSize := len(peekMatches[1])
+			if currentIdentSize <= 0 {
+				return val, nil
+			}
+
+			// NOTE: Just advance the parser reader (buffer) in-sync with the peek buffer.
+			_, err := p.readUntil('\n')
+			if err != nil {
+				return "", err
+			}
+
+			val += fmt.Sprintf("\n%s", peekMatches[2])
+		}
 	}
 
 	return line, nil
 }
 
-func (p *parser) readPythonMultilines(line string, bufferSize int) (string, error) {
-	parserBufferPeekResult, _ := p.buf.Peek(bufferSize)
-	peekBuffer := bytes.NewBuffer(parserBufferPeekResult)
-
-	for {
-		peekData, peekErr := peekBuffer.ReadBytes('\n')
-		if peekErr != nil {
-			if peekErr == io.EOF {
-				return line, nil
-			}
-			return "", peekErr
-		}
-
-		peekMatches := pythonMultiline.FindStringSubmatch(string(peekData))
-		if len(peekMatches) != 3 {
-			return line, nil
-		}
-
-		// NOTE: Return if not a python-ini multi-line value.
-		currentIdentSize := len(peekMatches[1])
-		if currentIdentSize <= 0 {
-			return line, nil
-		}
-
-		// NOTE: Just advance the parser reader (buffer) in-sync with the peek buffer.
-		_, err := p.readUntil('\n')
-		if err != nil {
-			return "", err
-		}
-
-		line += fmt.Sprintf("\n%s", peekMatches[2])
-	}
-}
-
 // parse parses data through an io.Reader.
 func (f *File) parse(reader io.Reader) (err error) {
-	p := newParser(reader, parserOptions{
-		IgnoreContinuation:          f.options.IgnoreContinuation,
-		IgnoreInlineComment:         f.options.IgnoreInlineComment,
-		AllowPythonMultilineValues:  f.options.AllowPythonMultilineValues,
-		SpaceBeforeInlineComment:    f.options.SpaceBeforeInlineComment,
-		UnescapeValueDoubleQuotes:   f.options.UnescapeValueDoubleQuotes,
-		UnescapeValueCommentSymbols: f.options.UnescapeValueCommentSymbols,
-		PreserveSurroundedQuote:     f.options.PreserveSurroundedQuote,
-	})
+	p := newParser(reader)
 	if err = p.BOM(); err != nil {
 		return fmt.Errorf("BOM: %v", err)
 	}
 
 	// Ignore error because default section name is never empty string.
-	name := DefaultSection
+	name := DEFAULT_SECTION
 	if f.options.Insensitive {
-		name = strings.ToLower(DefaultSection)
+		name = strings.ToLower(DEFAULT_SECTION)
 	}
 	section, _ := f.NewSection(name)
 
@@ -441,7 +426,15 @@ func (f *File) parse(reader io.Reader) (err error) {
 			if IsErrDelimiterNotFound(err) {
 				switch {
 				case f.options.AllowBooleanKeys:
-					kname, err := p.readValue(line, parserBufferSize)
+					kname, err := p.readValue(line,
+						parserBufferSize,
+						f.options.IgnoreContinuation,
+						f.options.IgnoreInlineComment,
+						f.options.UnescapeValueDoubleQuotes,
+						f.options.UnescapeValueCommentSymbols,
+						f.options.AllowPythonMultilineValues,
+						f.options.SpaceBeforeInlineComment,
+						f.options.PreserveSurroundedQuote)
 					if err != nil {
 						return err
 					}
@@ -468,7 +461,15 @@ func (f *File) parse(reader io.Reader) (err error) {
 			p.count++
 		}
 
-		value, err := p.readValue(line[offset:], parserBufferSize)
+		value, err := p.readValue(line[offset:],
+			parserBufferSize,
+			f.options.IgnoreContinuation,
+			f.options.IgnoreInlineComment,
+			f.options.UnescapeValueDoubleQuotes,
+			f.options.UnescapeValueCommentSymbols,
+			f.options.AllowPythonMultilineValues,
+			f.options.SpaceBeforeInlineComment,
+			f.options.PreserveSurroundedQuote)
 		if err != nil {
 			return err
 		}

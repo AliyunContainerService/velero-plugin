@@ -77,13 +77,16 @@ func (client *Client) AttachDiskWithCallback(request *AttachDiskRequest, callbac
 type AttachDiskRequest struct {
 	*requests.RpcRequest
 	ResourceOwnerId      requests.Integer `position:"Query" name:"ResourceOwnerId"`
-	InstanceId           string           `position:"Query" name:"InstanceId"`
+	KeyPairName          string           `position:"Query" name:"KeyPairName"`
+	Bootable             requests.Boolean `position:"Query" name:"Bootable"`
+	Password             string           `position:"Query" name:"Password"`
+	DiskId               string           `position:"Query" name:"DiskId"`
+	DeleteWithInstance   requests.Boolean `position:"Query" name:"DeleteWithInstance"`
 	ResourceOwnerAccount string           `position:"Query" name:"ResourceOwnerAccount"`
 	OwnerAccount         string           `position:"Query" name:"OwnerAccount"`
-	DiskId               string           `position:"Query" name:"DiskId"`
 	OwnerId              requests.Integer `position:"Query" name:"OwnerId"`
+	InstanceId           string           `position:"Query" name:"InstanceId"`
 	Device               string           `position:"Query" name:"Device"`
-	DeleteWithInstance   requests.Boolean `position:"Query" name:"DeleteWithInstance"`
 }
 
 // AttachDiskResponse is the response struct for api AttachDisk
