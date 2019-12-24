@@ -19,6 +19,17 @@ const (
 	ACLDefault ACLType = "default"
 )
 
+// bucket versioning status
+type VersioningStatus string
+
+const (
+	// Versioning Status definition: Enabled
+	VersionEnabled VersioningStatus = "Enabled"
+
+	// Versioning Status definition: Suspended
+	VersionSuspended VersioningStatus = "Suspended"
+)
+
 // MetadataDirectiveType specifying whether use the metadata of source object when copying object.
 type MetadataDirectiveType string
 
@@ -63,12 +74,26 @@ const (
 	StorageArchive StorageClassType = "Archive"
 )
 
+// RedundancyType bucket data Redundancy type
+type DataRedundancyType string
+
+const (
+	// RedundancyLRS Local redundancy, default value
+	RedundancyLRS DataRedundancyType = "LRS"
+
+	// RedundancyZRS Same city redundancy
+	RedundancyZRS DataRedundancyType = "ZRS"
+)
+
 // PayerType the type of request payer
 type PayerType string
 
 const (
 	// Requester the requester who send the request
-	Requester PayerType = "requester"
+	Requester PayerType = "Requester"
+
+	// BucketOwner the requester who send the request
+	BucketOwner PayerType = "BucketOwner"
 )
 
 // HTTPMethod HTTP request method
@@ -116,6 +141,8 @@ const (
 	HTTPHeaderIfUnmodifiedSince         = "If-Unmodified-Since"
 	HTTPHeaderIfMatch                   = "If-Match"
 	HTTPHeaderIfNoneMatch               = "If-None-Match"
+	HTTPHeaderACReqMethod               = "Access-Control-Request-Method"
+	HTTPHeaderACReqHeaders              = "Access-Control-Request-Headers"
 
 	HTTPHeaderOssACL                         = "X-Oss-Acl"
 	HTTPHeaderOssMetaPrefix                  = "X-Oss-Meta-"
@@ -140,6 +167,7 @@ const (
 	HTTPHeaderOssRequester                   = "X-Oss-Request-Payer"
 	HTTPHeaderOssTagging                     = "X-Oss-Tagging"
 	HTTPHeaderOssTaggingDirective            = "X-Oss-Tagging-Directive"
+	HTTPHeaderOssTrafficLimit                = "X-Oss-Traffic-Limit"
 )
 
 // HTTP Param
@@ -163,5 +191,16 @@ const (
 
 	CheckpointFileSuffix = ".cp" // Checkpoint file suffix
 
-	Version = "v1.9.8" // Go SDK version
+	NullVersion = "null"
+
+	Version = "v2.0.4" // Go SDK version
+)
+
+// FrameType
+const (
+	DataFrameType        = 8388609
+	ContinuousFrameType  = 8388612
+	EndFrameType         = 8388613
+	MetaEndFrameCSVType  = 8388614
+	MetaEndFrameJSONType = 8388615
 )

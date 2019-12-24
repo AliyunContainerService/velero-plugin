@@ -27,16 +27,22 @@ type Conn struct {
 	client *http.Client
 }
 
-var signKeyList = []string{"acl", "uploads", "location", "cors", "logging",
-	"website", "referer", "lifecycle", "delete", "append", "tagging", "objectMeta",
-	"uploadId", "partNumber", "security-token", "position", "img", "style", "styleName",
-	"replication", "replicationProgress", "replicationLocation", "cname", "bucketInfo",
-	"comp", "qos", "live", "status", "vod", "startTime", "endTime", "symlink",
-	"x-oss-process", "response-content-type", "response-content-language",
-	"response-expires", "response-cache-control", "response-content-disposition",
-	"response-content-encoding", "udf", "udfName", "udfImage", "udfId", "udfImageDesc",
-	"udfApplication", "comp", "udfApplicationLog", "restore", "callback", "callback-var",
-	"policy", "tagging", "stat", "encryption"}
+var signKeyList = []string{"acl", "uploads", "location", "cors",
+	"logging", "website", "referer", "lifecycle",
+	"delete", "append", "tagging", "objectMeta",
+	"uploadId", "partNumber", "security-token",
+	"position", "img", "style", "styleName",
+	"replication", "replicationProgress",
+	"replicationLocation", "cname", "bucketInfo",
+	"comp", "qos", "live", "status", "vod",
+	"startTime", "endTime", "symlink",
+	"x-oss-process", "response-content-type", "x-oss-traffic-limit",
+	"response-content-language", "response-expires",
+	"response-cache-control", "response-content-disposition",
+	"response-content-encoding", "udf", "udfName", "udfImage",
+	"udfId", "udfImageDesc", "udfApplication", "comp",
+	"udfApplicationLog", "restore", "callback", "callback-var", "qosInfo",
+	"policy", "stat", "encryption", "versions", "versioning", "versionId", "requestPayment"}
 
 // init initializes Conn
 func (conn *Conn) init(config *Config, urlMaker *urlMaker, client *http.Client) error {
@@ -49,6 +55,13 @@ func (conn *Conn) init(config *Config, urlMaker *urlMaker, client *http.Client) 
 			proxyURL, err := url.Parse(config.ProxyHost)
 			if err != nil {
 				return err
+			}
+			if config.IsAuthProxy {
+				if config.ProxyPassword != "" {
+					proxyURL.User = url.UserPassword(config.ProxyUser, config.ProxyPassword)
+				} else {
+					proxyURL.User = url.User(config.ProxyUser)
+				}
 			}
 			transport.Proxy = http.ProxyURL(proxyURL)
 		}
@@ -117,7 +130,7 @@ func (conn Conn) DoURL(method HTTPMethod, signedURL string, headers map[string]s
 	}
 
 	// Transfer started
-	event := newProgressEvent(TransferStartedEvent, 0, req.ContentLength)
+	event := newProgressEvent(TransferStartedEvent, 0, req.ContentLength, 0)
 	publishProgress(listener, event)
 
 	if conn.config.LogLevel >= Debug {
@@ -127,8 +140,9 @@ func (conn Conn) DoURL(method HTTPMethod, signedURL string, headers map[string]s
 	resp, err := conn.client.Do(req)
 	if err != nil {
 		// Transfer failed
-		event = newProgressEvent(TransferFailedEvent, tracker.completedBytes, req.ContentLength)
+		event = newProgressEvent(TransferFailedEvent, tracker.completedBytes, req.ContentLength, 0)
 		publishProgress(listener, event)
+		conn.config.WriteLog(Debug, "[Resp:%p]http error:%s\n", req, err.Error())
 		return nil, err
 	}
 
@@ -138,7 +152,7 @@ func (conn Conn) DoURL(method HTTPMethod, signedURL string, headers map[string]s
 	}
 
 	// Transfer completed
-	event = newProgressEvent(TransferCompletedEvent, tracker.completedBytes, req.ContentLength)
+	event = newProgressEvent(TransferCompletedEvent, tracker.completedBytes, req.ContentLength, 0)
 	publishProgress(listener, event)
 
 	return conn.handleResponse(resp, crc)
@@ -233,8 +247,10 @@ func (conn Conn) doRequest(method string, uri *url.URL, canonicalizedResource st
 	req.Header.Set(HTTPHeaderDate, date)
 	req.Header.Set(HTTPHeaderHost, conn.config.Endpoint)
 	req.Header.Set(HTTPHeaderUserAgent, conn.config.UserAgent)
-	if conn.config.SecurityToken != "" {
-		req.Header.Set(HTTPHeaderOssSecurityToken, conn.config.SecurityToken)
+
+	akIf := conn.config.GetCredentials()
+	if akIf.GetSecurityToken() != "" {
+		req.Header.Set(HTTPHeaderOssSecurityToken, akIf.GetSecurityToken())
 	}
 
 	if headers != nil {
@@ -246,7 +262,7 @@ func (conn Conn) doRequest(method string, uri *url.URL, canonicalizedResource st
 	conn.signHeader(req, canonicalizedResource)
 
 	// Transfer started
-	event := newProgressEvent(TransferStartedEvent, 0, req.ContentLength)
+	event := newProgressEvent(TransferStartedEvent, 0, req.ContentLength, 0)
 	publishProgress(listener, event)
 
 	if conn.config.LogLevel >= Debug {
@@ -257,8 +273,9 @@ func (conn Conn) doRequest(method string, uri *url.URL, canonicalizedResource st
 
 	if err != nil {
 		// Transfer failed
-		event = newProgressEvent(TransferFailedEvent, tracker.completedBytes, req.ContentLength)
+		event = newProgressEvent(TransferFailedEvent, tracker.completedBytes, req.ContentLength, 0)
 		publishProgress(listener, event)
+		conn.config.WriteLog(Debug, "[Resp:%p]http error:%s\n", req, err.Error())
 		return nil, err
 	}
 
@@ -268,15 +285,16 @@ func (conn Conn) doRequest(method string, uri *url.URL, canonicalizedResource st
 	}
 
 	// Transfer completed
-	event = newProgressEvent(TransferCompletedEvent, tracker.completedBytes, req.ContentLength)
+	event = newProgressEvent(TransferCompletedEvent, tracker.completedBytes, req.ContentLength, 0)
 	publishProgress(listener, event)
 
 	return conn.handleResponse(resp, crc)
 }
 
 func (conn Conn) signURL(method HTTPMethod, bucketName, objectName string, expiration int64, params map[string]interface{}, headers map[string]string) string {
-	if conn.config.SecurityToken != "" {
-		params[HTTPParamSecurityToken] = conn.config.SecurityToken
+	akIf := conn.config.GetCredentials()
+	if akIf.GetSecurityToken() != "" {
+		params[HTTPParamSecurityToken] = akIf.GetSecurityToken()
 	}
 	subResource := conn.getSubResource(params)
 	canonicalizedResource := conn.url.getResource(bucketName, objectName, subResource)
@@ -303,10 +321,10 @@ func (conn Conn) signURL(method HTTPMethod, bucketName, objectName string, expir
 		}
 	}
 
-	signedStr := conn.getSignedStr(req, canonicalizedResource)
+	signedStr := conn.getSignedStr(req, canonicalizedResource, akIf.GetAccessKeySecret())
 
 	params[HTTPParamExpires] = strconv.FormatInt(expiration, 10)
-	params[HTTPParamAccessKeyID] = conn.config.AccessKeyID
+	params[HTTPParamAccessKeyID] = akIf.GetAccessKeyID()
 	params[HTTPParamSignature] = signedStr
 
 	urlParams := conn.getURLParams(params)
@@ -321,12 +339,13 @@ func (conn Conn) signRtmpURL(bucketName, channelName, playlistName string, expir
 	expireStr := strconv.FormatInt(expiration, 10)
 	params[HTTPParamExpires] = expireStr
 
-	if conn.config.AccessKeyID != "" {
-		params[HTTPParamAccessKeyID] = conn.config.AccessKeyID
-		if conn.config.SecurityToken != "" {
-			params[HTTPParamSecurityToken] = conn.config.SecurityToken
+	akIf := conn.config.GetCredentials()
+	if akIf.GetAccessKeyID() != "" {
+		params[HTTPParamAccessKeyID] = akIf.GetAccessKeyID()
+		if akIf.GetSecurityToken() != "" {
+			params[HTTPParamSecurityToken] = akIf.GetSecurityToken()
 		}
-		signedStr := conn.getRtmpSignedStr(bucketName, channelName, playlistName, expiration, params)
+		signedStr := conn.getRtmpSignedStr(bucketName, channelName, playlistName, expiration, akIf.GetAccessKeySecret(), params)
 		params[HTTPParamSignature] = signedStr
 	}
 
@@ -637,7 +656,7 @@ type urlMaker struct {
 }
 
 // Init parses endpoint
-func (um *urlMaker) Init(endpoint string, isCname bool, isProxy bool) {
+func (um *urlMaker) Init(endpoint string, isCname bool, isProxy bool) error {
 	if strings.HasPrefix(endpoint, "http://") {
 		um.Scheme = "http"
 		um.NetLoc = endpoint[len("http://"):]
@@ -649,6 +668,14 @@ func (um *urlMaker) Init(endpoint string, isCname bool, isProxy bool) {
 		um.NetLoc = endpoint
 	}
 
+	//use url.Parse() to get real host
+	strUrl := um.Scheme + "://" + um.NetLoc
+	url, err := url.Parse(strUrl)
+	if err != nil {
+		return err
+	}
+
+	um.NetLoc = url.Host
 	host, _, err := net.SplitHostPort(um.NetLoc)
 	if err != nil {
 		host = um.NetLoc
@@ -666,6 +693,8 @@ func (um *urlMaker) Init(endpoint string, isCname bool, isProxy bool) {
 		um.Type = urlTypeAliyun
 	}
 	um.IsProxy = isProxy
+
+	return nil
 }
 
 // getURL gets URL
