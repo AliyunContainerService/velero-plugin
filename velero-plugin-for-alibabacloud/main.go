@@ -25,6 +25,7 @@ func main() {
 	veleroplugin.NewServer().
 		RegisterObjectStore("velero.io/alibabacloud", newAlibabaCloudObjectStore).
 		RegisterVolumeSnapshotter("velero.io/alibabacloud", newAlibabaCloudVolumeSnapshotter).
+		RegisterRestoreItemAction("velero.io/alibabacloud", newAlibabaCloudRestoreItemAction).
 		Serve()
 }
 
@@ -34,4 +35,8 @@ func newAlibabaCloudObjectStore(logger logrus.FieldLogger) (interface{}, error) 
 
 func newAlibabaCloudVolumeSnapshotter(logger logrus.FieldLogger) (interface{}, error) {
 	return newVolumeSnapshotter(logger), nil
+}
+
+func newAlibabaCloudRestoreItemAction(logger logrus.FieldLogger) (interface{}, error) {
+	return newRestoreItemAction(logger), nil
 }

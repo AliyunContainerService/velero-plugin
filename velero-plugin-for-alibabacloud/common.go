@@ -10,10 +10,15 @@ import (
 )
 
 const (
-	metadataURL       = "http://100.100.100.200/latest/meta-data/"
-	metadataRegionKey = "region"
-	metadataZoneKey   = "zone-id"
-	regionConfigKey   = "region"
+	metadataURL              = "http://100.100.100.200/latest/meta-data/"
+	metadataRegionKey        = "region"
+	metadataZoneKey          = "zone-id"
+	regionConfigKey          = "region"
+	minReqVolSizeBytes       = 21474836480
+	minReqVolSizeString      = "20Gi"
+	kindKey                  = "kind"
+	persistentVolumeKey      = "PersistentVolume"
+	persistentVolumeClaimKey = "PersistentVolumeClaim"
 )
 
 // load environment vars from $ALIBABA_CLOUD_CREDENTIALS_FILE, if it exists
