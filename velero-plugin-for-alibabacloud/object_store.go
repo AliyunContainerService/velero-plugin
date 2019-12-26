@@ -70,7 +70,7 @@ type ObjectStore struct {
 	privateKey      []byte
 }
 
-// NewObjectStore init ObjectStore
+// newObjectStore init ObjectStore
 func newObjectStore(logger logrus.FieldLogger) *ObjectStore {
 	return &ObjectStore{log: logger}
 }
