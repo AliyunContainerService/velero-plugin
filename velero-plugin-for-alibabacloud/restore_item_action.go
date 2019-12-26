@@ -1,14 +1,14 @@
 package main
 
 import (
-	corev1api "k8s.io/api/core/v1"
+	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/vmware-tanzu/velero/pkg/plugin/velero"
+	corev1api "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
-	"k8s.io/apimachinery/pkg/runtime"
-	"github.com/pkg/errors"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/api/resource"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
 type RestoreItemAction struct {
@@ -16,7 +16,7 @@ type RestoreItemAction struct {
 }
 
 //
-func newRestoreItemAction (logger logrus.FieldLogger) *RestoreItemAction {
+func newRestoreItemAction(logger logrus.FieldLogger) *RestoreItemAction {
 	return &RestoreItemAction{log: logger}
 }
 
@@ -53,7 +53,6 @@ func (p *RestoreItemAction) Execute(input *velero.RestoreItemActionExecuteInput)
 		annotations = make(map[string]string)
 	}
 
-
 	annotations["velero.io/alibabacloud-restore-plugin"] = "1"
 
 	metadata.SetAnnotations(annotations)
@@ -69,7 +68,7 @@ func (p *RestoreItemAction) Execute(input *velero.RestoreItemActionExecuteInput)
 		if int64(volSizeBytes) <= int64(minReqVolSizeBytes) {
 			p.log.Warnf("Alibaba disk volume request at least 20Gi, auto resize persistentVolumeClaim to 20Gi.")
 			pvc.Spec.Resources = corev1api.ResourceRequirements{
-				Requests : getResourceList(minReqVolSizeString),
+				Requests: getResourceList(minReqVolSizeString),
 			}
 			pvc.Status = corev1api.PersistentVolumeClaimStatus{}
 			inputMap, err = runtime.DefaultUnstructuredConverter.ToUnstructured(&pvc)
@@ -96,15 +95,15 @@ func (p *RestoreItemAction) Execute(input *velero.RestoreItemActionExecuteInput)
 			nodeAffinity := pv.Spec.NodeAffinity
 
 			pv.Spec = corev1api.PersistentVolumeSpec{
-				Capacity: getResourceList(minReqVolSizeString),
-				PersistentVolumeSource: persistentVolumeSource,
-				AccessModes: accessModes,
-				ClaimRef: claimRef,
+				Capacity:                      getResourceList(minReqVolSizeString),
+				PersistentVolumeSource:        persistentVolumeSource,
+				AccessModes:                   accessModes,
+				ClaimRef:                      claimRef,
 				PersistentVolumeReclaimPolicy: persistentVolumeReclaimPolicy,
-				StorageClassName: storageClassName,
-				MountOptions: mountOptions,
-				VolumeMode: volumeMode,
-				NodeAffinity: nodeAffinity,
+				StorageClassName:              storageClassName,
+				MountOptions:                  mountOptions,
+				VolumeMode:                    volumeMode,
+				NodeAffinity:                  nodeAffinity,
 			}
 			pv.Status = corev1api.PersistentVolumeStatus{}
 			inputMap, err = runtime.DefaultUnstructuredConverter.ToUnstructured(&pv)
@@ -125,5 +124,3 @@ func getResourceList(storage string) corev1api.ResourceList {
 	}
 	return res
 }
-
-

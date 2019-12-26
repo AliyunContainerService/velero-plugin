@@ -1,12 +1,12 @@
 package main
 
 import (
+	"fmt"
 	"github.com/joho/godotenv"
-	"os"
 	"github.com/pkg/errors"
 	"io/ioutil"
 	"net/http"
-	"fmt"
+	"os"
 )
 
 const (
