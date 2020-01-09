@@ -95,7 +95,7 @@ spec:
           - mountPath: /credentials
             name: cloud-credentials
       initContainers:
-      - image: registry.cn-hangzhou.aliyuncs.com/acs/velero-plugin-alibabacloud:v1.2
+      - image: registry.cn-hangzhou.aliyuncs.com/acs/velero-plugin-alibabacloud:v1.2-991b590
         imagePullPolicy: IfNotPresent
         name: velero-plugin-alibabacloud
         volumeMounts:
