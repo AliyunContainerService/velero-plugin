@@ -92,10 +92,9 @@ For more information, see [the AlibabaCloud documentation on RAM users guides][1
     ```
     ALIBABA_CLOUD_ACCESS_KEY_ID=<ALIBABA_CLOUD_ACCESS_KEY_ID>
     ALIBABA_CLOUD_ACCESS_KEY_SECRET=<ALIBABA_CLOUD_ACCESS_KEY_SECRET>
-    ALIBABA_CLOUD_OSS_ENDPOINT=<ALIBABA_CLOUD_OSS_ENDPOINT>
     ```
 
-    where the access key id and secret are the values get from the step 3 and the oss endpoint is the value oss-$REGION.aliyuncs.com.  
+    where the access key id and secret are the values get from the step 3.
      
 ## Install velero and velero-plugin for alibabacloud
 

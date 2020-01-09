@@ -11,7 +11,7 @@ import (
 
 const (
 	metadataURL              = "http://100.100.100.200/latest/meta-data/"
-	metadataRegionKey        = "region"
+	metadataRegionKey        = "region-id"
 	metadataZoneKey          = "zone-id"
 	regionConfigKey          = "region"
 	minReqVolSizeBytes       = 21474836480
@@ -52,7 +52,7 @@ func getMetaData(resource string) (string, error) {
 // getOssEndpoint return oss endpoint in format "oss-%s.aliyuncs.com"
 func getOssEndpoint(config map[string]string) string {
 	if value := config[regionConfigKey]; value == "" {
-		if value, err := getMetaData(metadataRegionKey); err != nil {
+		if value, err := getMetaData(metadataRegionKey); err != nil || value == "" {
 			// set default region
 			return "oss-cn-hangzhou.aliyuncs.com"
 		} else {
@@ -66,7 +66,7 @@ func getOssEndpoint(config map[string]string) string {
 // getEcsRegionID return ecs region id
 func getEcsRegionID(config map[string]string) string {
 	if value := config[regionConfigKey]; value == "" {
-		if value, err := getMetaData(metadataRegionKey); err != nil {
+		if value, err := getMetaData(metadataRegionKey); err != nil || value == "" {
 			// set default region
 			return "cn-hangzhou"
 		} else {
