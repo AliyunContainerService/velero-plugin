@@ -30,7 +30,8 @@ metadata:
   name: default
   namespace: velero
 spec:
-  config: {}
+  config:
+    region: <REGION>
   objectStorage:
     bucket: <BUCKET>
     prefix: ""
