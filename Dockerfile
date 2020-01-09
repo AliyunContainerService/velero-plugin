@@ -14,6 +14,6 @@
 
 FROM debian:stretch-slim
 RUN mkdir /plugins
-ADD velero-* /plugins/
+ADD _output/velero-* /plugins/
 USER nobody:nobody
 ENTRYPOINT ["/bin/bash", "-c", "cp /plugins/* /target/."]
