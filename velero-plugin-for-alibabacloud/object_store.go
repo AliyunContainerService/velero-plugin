@@ -85,7 +85,7 @@ func (o *ObjectStore) getBucket(bucket string) (ossBucket, error) {
 
 // Init init oss client with os envs
 func (o *ObjectStore) Init(config map[string]string) error {
-	if err := veleroplugin.ValidateObjectStoreConfigKeys(config, regionConfigKey); err != nil {
+	if err := veleroplugin.ValidateObjectStoreConfigKeys(config, regionConfigKey, networkTypeConfigKey); err != nil {
 		return err
 	}
 
