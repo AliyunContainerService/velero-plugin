@@ -19,6 +19,9 @@ const (
 	kindKey                  = "kind"
 	persistentVolumeKey      = "PersistentVolume"
 	persistentVolumeClaimKey = "PersistentVolumeClaim"
+	networkTypeConfigKey     = "network"
+	networkTypeAccelerate    = "accelerate"
+	networkTypeInternal      = "internal"
 )
 
 // load environment vars from $ALIBABA_CLOUD_CREDENTIALS_FILE, if it exists
@@ -49,8 +52,36 @@ func getMetaData(resource string) (string, error) {
 	return string(body), nil
 }
 
-// getOssEndpoint return oss endpoint in format "oss-%s.aliyuncs.com"
+// getOssEndpoint:
+// return oss public endpoint in format "oss-%s.aliyuncs.com"
+// return oss accelerate endpoint in format "oss-accelerate.aliyuncs.com"
+// return oss internal endpoint in format "oss-%s-internal.aliyuncs.com"
 func getOssEndpoint(config map[string]string) string {
+	if networkType := config[networkTypeConfigKey]; networkType != "" {
+		switch networkType {
+		case networkTypeInternal:
+			if value := config[regionConfigKey]; value != "" {
+				return fmt.Sprintf("oss-%s-internal.aliyuncs.com", value)
+			} else {
+				if value, err := getMetaData(metadataRegionKey); err != nil || value == "" {
+					// set default region
+					return "oss-cn-hangzhou-internal.aliyuncs.com"
+				}
+			}
+		case networkTypeAccelerate:
+			return "oss-accelerate.aliyuncs.com"
+		default:
+			if value := config[regionConfigKey]; value != "" {
+				return fmt.Sprintf("oss-%s.aliyuncs.com", value)
+			} else {
+				if value, err := getMetaData(metadataRegionKey); err != nil || value == "" {
+					// set default region
+					return "oss-cn-hangzhou.aliyuncs.com"
+				}
+			}
+		}
+	}
+
 	if value := config[regionConfigKey]; value == "" {
 		if value, err := getMetaData(metadataRegionKey); err != nil || value == "" {
 			// set default region
