@@ -6,7 +6,7 @@ export GOARCH="amd64"
 export GOOS="linux"
 
 branch="master"
-version="v1.2"
+version="v1.0.0"
 commitId=$GIT_SHA
 buildTime=`date "+%Y-%m-%d-%H:%M:%S"`
 CGO_ENABLED=0 go build -ldflags "-X main._BRANCH_='$branch' -X main._VERSION_='$version-$commitId' -X main._BUILDTIME_='$buildTime'" -o _output/velero-plugin-for-alibabacloud ${GOPATH}/src/github.com/AliyunContainerService/velero-plugin/velero-plugin-for-alibabacloud
