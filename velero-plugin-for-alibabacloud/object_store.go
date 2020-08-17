@@ -68,6 +68,8 @@ type ObjectStore struct {
 	client          bucketGetter
 	encryptionKeyID string
 	privateKey      []byte
+	ramRole         string
+	endpoint        string
 }
 
 // newObjectStore init ObjectStore
@@ -76,6 +78,11 @@ func newObjectStore(logger logrus.FieldLogger) *ObjectStore {
 }
 
 func (o *ObjectStore) getBucket(bucket string) (ossBucket, error) {
+	var err error
+	o.client, err = updateOssClient(o.ramRole, o. endpoint, o.client)
+	if err != nil {
+		o.log.Errorf("failed to update OSS Client: %v", err)
+	}
 	bucketObj, err := o.client.Bucket(bucket)
 	if err != nil {
 		o.log.Errorf("failed to get OSS bucket: %v", err)
@@ -89,31 +96,62 @@ func (o *ObjectStore) Init(config map[string]string) error {
 		return err
 	}
 
-	if err := loadEnv(); err != nil {
-		return err
-	}
+	accessKeyID := ""
+	accessKeySecret := ""
+	stsToken := ""
+	encryptionKeyID := ""
 
-	accessKeyID := os.Getenv("ALIBABA_CLOUD_ACCESS_KEY_ID")
-	accessKeySecret := os.Getenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET")
-	stsToken := os.Getenv("ALIBABA_CLOUD_ACCESS_STS_TOKEN")
-	encryptionKeyID := os.Getenv("ALIBABA_CLOUD_ENCRYPTION_KEY_ID")
-
-	if len(accessKeyID) == 0 {
-		return errors.Errorf("ALIBABA_CLOUD_ACCESS_KEY_ID environment variable is not set")
-	}
-
-	if len(accessKeySecret) == 0 {
-		return errors.Errorf("ALIBABA_CLOUD_ACCESS_KEY_SECRET environment variable is not set")
-	}
-
-	endpoint := getOssEndpoint(config)
 	var client *oss.Client
 	var err error
 
-	if len(stsToken) == 0 {
-		client, err = oss.New(endpoint, accessKeyID, accessKeySecret)
+	endpoint := getOssEndpoint(config)
+	veleroForAck := os.Getenv("VELERO_FOR_ACK")
+	isHybrid := os.Getenv("IS_HYBRID")
+	if veleroForAck == "true" {
+		if isHybrid == "true" {
+			accessKeyID = os.Getenv("ALIBABA_CLOUD_ACCESS_KEY_ID")
+			accessKeySecret = os.Getenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET")
+			if len(accessKeyID) == 0 {
+				return errors.Errorf("IS_HYBRID set to true, but ALIBABA_CLOUD_ACCESS_KEY_ID environment variable is not set")
+			}
+			if len(accessKeySecret) == 0 {
+				return errors.Errorf("IS_HYBRID set to true, but ALIBABA_CLOUD_ACCESS_KEY_SECRET environment variable is not set")
+			}
+		} else {
+			ramRole, err := getRamRole()
+			if err != nil {
+				return errors.Errorf("Failed to get ram role with err: %v", err)
+			}
+			o.ramRole = ramRole
+
+			accessKeyID, accessKeySecret, stsToken, err = getSTSAK(ramRole)
+			if err != nil {
+				return errors.Errorf("Failed to get sts token from ram role %s with err: %v", ramRole, err)
+			}
+			client, err = oss.New(endpoint, accessKeyID, accessKeySecret, oss.SecurityToken(stsToken))
+		}
+
 	} else {
-		client, err = oss.New(endpoint, accessKeyID, accessKeySecret, oss.SecurityToken(stsToken))
+		if err := loadEnv(); err != nil {
+			return err
+		}
+		accessKeyID = os.Getenv("ALIBABA_CLOUD_ACCESS_KEY_ID")
+		accessKeySecret = os.Getenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET")
+		stsToken = os.Getenv("ALIBABA_CLOUD_ACCESS_STS_TOKEN")
+		encryptionKeyID = os.Getenv("ALIBABA_CLOUD_ENCRYPTION_KEY_ID")
+		if len(accessKeyID) == 0 {
+			return errors.Errorf("ALIBABA_CLOUD_ACCESS_KEY_ID environment variable is not set")
+		}
+
+		if len(accessKeySecret) == 0 {
+			return errors.Errorf("ALIBABA_CLOUD_ACCESS_KEY_SECRET environment variable is not set")
+		}
+
+		if len(stsToken) == 0 {
+			client, err = oss.New(endpoint, accessKeyID, accessKeySecret)
+		} else {
+			client, err = oss.New(endpoint, accessKeyID, accessKeySecret, oss.SecurityToken(stsToken))
+		}
 	}
 
 	if err != nil {
@@ -124,6 +162,7 @@ func (o *ObjectStore) Init(config map[string]string) error {
 		client,
 	}
 
+	o.endpoint = endpoint
 	o.encryptionKeyID = encryptionKeyID
 
 	return nil
@@ -140,7 +179,6 @@ func (o *ObjectStore) PutObject(bucket, key string, body io.Reader) error {
 			oss.ServerSideEncryption("KMS"),
 			oss.ServerSideEncryptionKeyID(o.encryptionKeyID))
 	} else {
-
 		err = bucketObj.PutObject(key, body)
 	}
 
