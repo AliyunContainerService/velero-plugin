@@ -1,12 +1,15 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"github.com/aliyun/aliyun-oss-go-sdk/oss"
 	"github.com/joho/godotenv"
 	"github.com/pkg/errors"
 	"io/ioutil"
 	"net/http"
 	"os"
+	"time"
 )
 
 const (
@@ -23,6 +26,16 @@ const (
 	networkTypeAccelerate    = "accelerate"
 	networkTypeInternal      = "internal"
 )
+
+// RoleAuth define STS Token Response
+type RoleAuth struct {
+	AccessKeyID     string
+	AccessKeySecret string
+	Expiration      time.Time
+	SecurityToken   string
+	LastUpdated     time.Time
+	Code            string
+}
 
 // load environment vars from $ALIBABA_CLOUD_CREDENTIALS_FILE, if it exists
 func loadEnv() error {
@@ -106,4 +119,63 @@ func getEcsRegionID(config map[string]string) string {
 	} else {
 		return value
 	}
+}
+
+// getRamRole return ramrole name
+func getRamRole () (string, error) {
+	subpath := "ram/security-credentials/"
+	roleName, err := GetMetaData(subpath)
+	if err != nil {
+		return "", err
+	}
+	return roleName, nil
+}
+
+//getSTSAK return AccessKeyID, AccessKeySecret and SecurityToken
+func getSTSAK(ramrole string) (string, string, string, error) {
+	// AliyunCSVeleroRole
+	roleAuth := RoleAuth{}
+	ramRoleURL := fmt.Sprintf("ram/security-credentials/%s", ramrole)
+	roleInfo, err := GetMetaData(ramRoleURL)
+	if err != nil {
+		return "", "", "", err
+	}
+
+	err = json.Unmarshal([]byte(roleInfo), &roleAuth)
+	if err != nil {
+		return "", "", "", err
+	}
+	return roleAuth.AccessKeyID, roleAuth.AccessKeySecret, roleAuth.SecurityToken, nil
+}
+
+//GetMetaData get metadata from ecs meta-server
+func GetMetaData(resource string) (string, error) {
+	resp, err := http.Get(metadataURL + resource)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	return string(body), nil
+}
+
+func updateOssClient(ramRole string, endpoint string, client bucketGetter) (bucketGetter, error) {
+	bucketGetter := &ossBucketGetter{}
+	if len(ramRole) == 0 {
+		return client, nil
+	}
+	accessKeyID, accessKeySecret, stsToken, err := getSTSAK(ramRole)
+	if err != nil {
+		return nil, err
+	}
+	ossClient, err := oss.New(endpoint, accessKeyID, accessKeySecret, oss.SecurityToken(stsToken))
+	if err != nil {
+		return nil, err
+	}
+
+	bucketGetter.client = ossClient
+	return bucketGetter, err
 }
