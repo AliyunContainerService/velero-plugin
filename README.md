@@ -57,6 +57,8 @@ For more information, see [the AlibabaCloud documentation on RAM users guides][1
 
 2. Attach policies to give `velero` the necessary permissions:
 
+    > Note that you'd better release the velero's delete permissions once you have completed your backup or restore task for safety reasons.
+
     ```bash
     {
         "Version": "1",
@@ -104,31 +106,38 @@ For more information, see [the AlibabaCloud documentation on RAM users guides][1
 	BUCKET=<YOUR_BUCKET>
 	REGION=<YOUR_REGION>
 	```
-
-2. Create a namespace velero and a secret cloud-credentials
-
-	Run the following command to create a namespace named `velero`
-
-	`kubectl create namespace velero`
-
-	Run the following command to create a secret named `cloud-credentials`
-
-	`kubectl create secret generic cloud-credentials --namespace velero --from-file cloud=install/credentials-velero`
 	
-3. Create and run velero and velero-plugin for alibabacloud
+2. Create and run velero and velero-plugin for alibabacloud
 
 	Run the following command to create and run velero and velero-plugin for alibabacloud
 	
 	```
-	kubectl apply -f install/00-crds.yaml
+	velero install \
+      --provider alibabacloud \
+      --image registry.$REGION.aliyuncs.com/acs/velero:1.4.2-2b9dce65-aliyun \
+      --bucket $BUCKET \
+      --secret-file ./credentials-velero \
+      --use-volume-snapshots=false \
+      --backup-location-config region=$REGION \
+      --use-restic \
+      --plugins registry.$REGION.aliyuncs.com/acs/velero-plugin-alibabacloud:v1.0.0-2d33b89 \
+      --wait
 	```
-  
-	```
-	sed -i "s#<BUCKET>#$BUCKET#" install/01-velero.yaml
-	sed -i "s#<REGION>#$REGION#" install/01-velero.yaml
-	kubectl apply -f install/01-velero.yaml
-	```
+
+    If you want use an internal oss endpoint, you can add params:
+    
+    `--backup-location-config region=$REGION,network=internal`
+    
+    If you want use a oss prefix to store backup files, you can add params:
+    
+    `--prefix <your oss bucket prefix>`
 	
+3. Create ConfigMap for velero restic helper image in your restore cluster
+
+  Run the following command to create a velero restic helper configmap in your restore cluster(optional for backup cluster).
+  
+  `kubectl -n velero apply -f install/02-configmap.yaml`
+
 4. Cleanup velero installation
 
 	Run the following command to cleanup the velero installation
@@ -166,6 +175,12 @@ For more information, see [the AlibabaCloud documentation on RAM users guides][1
 	kubectl apply -f examples/with-pv.yaml
 	```
 	
+	Add annotations to pod volume, restic will backup the volume data during backup process.
+	
+	```
+    kubectl -n nginx-example annotate pod/nginx-deployment-7477779c4f-dxspm backup.velero.io/backup-volumes=nginx-logs
+    ```
+ 
 	Create a backup:
 	
 	`velero backup create nginx-backup-volume --include-namespaces nginx-example --wait`
