@@ -117,6 +117,7 @@ func (o *ObjectStore) Init(config map[string]string) error {
 			if len(accessKeySecret) == 0 {
 				return errors.Errorf("IS_HYBRID set to true, but ALIBABA_CLOUD_ACCESS_KEY_SECRET environment variable is not set")
 			}
+			client, err = oss.New(endpoint, accessKeyID, accessKeySecret)
 		} else {
 			ramRole, err := getRamRole()
 			if err != nil {
