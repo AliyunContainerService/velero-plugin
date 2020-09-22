@@ -75,7 +75,8 @@ For more information, see [the AlibabaCloud documentation on RAM users guides][1
                     "oss:GetObject",
                     "oss:DeleteObject",
                     "oss:GetBucket",
-                    "oss:ListObjects"
+                    "oss:ListObjects",
+                    "oss:ListBuckets"
                 ],
                 "Resource": [
                     "*"
