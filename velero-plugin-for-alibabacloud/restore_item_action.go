@@ -93,6 +93,15 @@ func (p *RestoreItemAction) Execute(input *velero.RestoreItemActionExecuteInput)
 			mountOptions := pv.Spec.MountOptions
 			volumeMode := pv.Spec.VolumeMode
 			nodeAffinity := pv.Spec.NodeAffinity
+			if len(nodeAffinity.Required.NodeSelectorTerms) > 0 && len(nodeAffinity.Required.NodeSelectorTerms[0].MatchExpressions) > 0 {
+				if nodeAffinity.Required.NodeSelectorTerms[0].MatchExpressions[0].Key == "topology.diskplugin.csi.alibabacloud.com/zone" {
+					volumeAZ, err := getMetaData(metadataZoneKey)
+					if err != nil {
+						return nil, errors.Errorf("Set NodeAffinity failed to get zone-id, got %v", err)
+					}
+					nodeAffinity.Required.NodeSelectorTerms[0].MatchExpressions[0].Values = []string{volumeAZ}
+				}
+			}
 
 			pv.Spec = corev1api.PersistentVolumeSpec{
 				Capacity:                      getResourceList(minReqVolSizeString),
