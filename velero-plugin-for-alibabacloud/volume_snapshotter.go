@@ -101,9 +101,10 @@ func (b *VolumeSnapshotter) CreateVolumeFromSnapshot(snapshotID, volumeType, vol
 
 	tags := getTagsForCluster(snapRes.Snapshots.Snapshot[0].Tags.Tag)
 
-	volumeAZ, err = getMetaData(metadataZoneKey)
-	if err != nil {
-		return "", errors.Errorf("failed to get zone-id, got %v", err)
+	for _, tag := range snapRes.Snapshots.Snapshot[0].Tags.Tag {
+		if tag.TagKey == "volumeAZ" {
+			volumeAZ = tag.TagValue
+		}
 	}
 
 	// filter tags through getTagsForCluster() function in order to apply
@@ -166,6 +167,7 @@ func (b *VolumeSnapshotter) CreateSnapshot(volumeID, volumeAZ string, tags map[s
 	req := ecs.CreateCreateSnapshotRequest()
 	req.DiskId = volumeID
 
+	tags["volumeAZ"] = volumeInfo.ZoneId
 	newTags := getTags(tags, volumeInfo.Tags.Tag)
 
 	if len(tags) > 0 {
