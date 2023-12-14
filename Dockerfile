@@ -12,23 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM --platform=$BUILDPLATFORM golang:1.21 AS build
-
-ARG TARGETOS
-ARG TARGETARCH
-ARG TARGETVARIANT
-ARG GOPROXY
-
-ENV GOOS=${TARGETOS} \
-    GOARCH=${TARGETARCH} \
-    GOARM=${TARGETVARIANT} \
-    GOPROXY=${GOPROXY}
-
-COPY . /go/src/velero-plugin-for-alibabacloud
-WORKDIR /go/src/velero-plugin-for-alibabacloud
-RUN CGO_ENABLED=0 GOOS=linux go build -v -o /go/bin/velero-plugin-for-alibabacloud ./velero-plugin-for-alibabacloud
-
-FROM busybox
-COPY --from=build /go/bin/velero-plugin-for-alibabacloud /plugin/
-USER 65532:65532
-ENTRYPOINT ["/plugin/velero-plugin-for-alibabacloud", "/target/velero-plugin-for-alibabacloud"]
+FROM debian:stretch-slim
+RUN mkdir /plugins
+ADD _output/velero-* /plugins/
+USER nobody:nobody
+ENTRYPOINT ["/bin/bash", "-c", "cp /plugins/* /target/."]
