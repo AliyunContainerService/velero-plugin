@@ -14,6 +14,7 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"regexp"
@@ -51,7 +52,7 @@ func (b *VolumeSnapshotter) Init(config map[string]string) error {
 		return err
 	}
 
-	if err := loadEnv(); err != nil {
+	if err := loadCredentialFileFromEnv(); err != nil {
 		return err
 	}
 
@@ -101,9 +102,13 @@ func (b *VolumeSnapshotter) CreateVolumeFromSnapshot(snapshotID, volumeType, vol
 
 	tags := getTagsForCluster(snapRes.Snapshots.Snapshot[0].Tags.Tag)
 
-	volumeAZ, err = getMetaData(metadataZoneKey)
-	if err != nil {
-		return "", errors.Errorf("failed to get zone-id, got %v", err)
+	// Use volumeAZ from parameter if provided, otherwise get from metadata
+	if volumeAZ == "" {
+		zoneID, err := MetaClient.GetZoneId(context.Background())
+		if err != nil {
+			return "", errors.Errorf("failed to get zone-id, got %v", err)
+		}
+		volumeAZ = zoneID
 	}
 
 	// filter tags through getTagsForCluster() function in order to apply

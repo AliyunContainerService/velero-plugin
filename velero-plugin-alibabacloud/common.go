@@ -1,44 +1,41 @@
 package main
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
+	"os"
+
+	"github.com/AliyunContainerService/ack-ram-tool/pkg/ecsmetadata"
 	"github.com/aliyun/aliyun-oss-go-sdk/oss"
 	"github.com/joho/godotenv"
 	"github.com/pkg/errors"
-	"io/ioutil"
-	"net/http"
-	"os"
-	"time"
+	"k8s.io/klog/v2"
 )
 
+var MetaClient = ecsmetadata.DefaultClient
+var MetaRegion string
+
 const (
-	metadataURL              = "http://100.100.100.200/latest/meta-data/"
-	metadataRegionKey        = "region-id"
-	metadataZoneKey          = "zone-id"
-	regionConfigKey          = "region"
-	minReqVolSizeBytes       = 21474836480
-	minReqVolSizeString      = "20Gi"
+	regionConfigKey      = "region"
+	networkTypeConfigKey = "network"
+	endpointConfigKey    = "endpoint"
+
+	networkTypeAccelerate = "accelerate"
+	networkTypeInternal   = "internal"
+
+	DefaultRegion = "cn-hangzhou"
+
 	kindKey                  = "kind"
 	persistentVolumeKey      = "PersistentVolume"
 	persistentVolumeClaimKey = "PersistentVolumeClaim"
-	networkTypeConfigKey     = "network"
-	networkTypeAccelerate    = "accelerate"
-	networkTypeInternal      = "internal"
+
+	// Constants for volume ID conversion
+	OriginStr = "volumeId"
+	TargetStr = "VolumeId"
 )
 
-// RoleAuth define STS Token Response
-type RoleAuth struct {
-	AccessKeyID     string
-	AccessKeySecret string
-	Expiration      time.Time
-	SecurityToken   string
-	LastUpdated     time.Time
-	Code            string
-}
-
 // load environment vars from $ALIBABA_CLOUD_CREDENTIALS_FILE, if it exists
-func loadEnv() error {
+func loadCredentialFileFromEnv() error {
 	envFile := os.Getenv("ALIBABA_CLOUD_CREDENTIALS_FILE")
 	if envFile == "" {
 		return nil
@@ -51,115 +48,120 @@ func loadEnv() error {
 	return nil
 }
 
-// get region or available zone information
-func getMetaData(resource string) (string, error) {
-	resp, err := http.Get(metadataURL + resource)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-	return string(body), nil
-}
-
 // getOssEndpoint:
+// return customized oss endpoint
 // return oss public endpoint in format "oss-%s.aliyuncs.com"
 // return oss accelerate endpoint in format "oss-accelerate.aliyuncs.com"
 // return oss internal endpoint in format "oss-%s-internal.aliyuncs.com"
 func getOssEndpoint(config map[string]string) string {
-	if networkType := config[networkTypeConfigKey]; networkType != "" {
-		switch networkType {
-		case networkTypeInternal:
-			if value := config[regionConfigKey]; value != "" {
-				return fmt.Sprintf("oss-%s-internal.aliyuncs.com", value)
-			} else {
-				if value, err := getMetaData(metadataRegionKey); err != nil || value == "" {
-					// set default region
-					return "oss-cn-hangzhou-internal.aliyuncs.com"
-				}
-			}
-		case networkTypeAccelerate:
-			return "oss-accelerate.aliyuncs.com"
-		default:
-			if value := config[regionConfigKey]; value != "" {
-				return fmt.Sprintf("oss-%s.aliyuncs.com", value)
-			} else {
-				if value, err := getMetaData(metadataRegionKey); err != nil || value == "" {
-					// set default region
-					return "oss-cn-hangzhou.aliyuncs.com"
-				}
-			}
-		}
+
+	if endpoint := config[endpointConfigKey]; endpoint != "" {
+		return endpoint
 	}
 
-	if value := config[regionConfigKey]; value == "" {
-		if value, err := getMetaData(metadataRegionKey); err != nil || value == "" {
-			// set default region
-			return "oss-cn-hangzhou.aliyuncs.com"
-		} else {
-			return fmt.Sprintf("oss-%s.aliyuncs.com", value)
-		}
-	} else {
-		return fmt.Sprintf("oss-%s.aliyuncs.com", value)
+	region := getEcsRegionID(config)
+	if region == "" {
+		region = DefaultRegion
 	}
+
+	switch config[networkTypeConfigKey] {
+	case networkTypeInternal:
+		return fmt.Sprintf("https://oss-%s-internal.aliyuncs.com", region)
+
+	case networkTypeAccelerate:
+		return "https://oss-accelerate.aliyuncs.com"
+	default:
+		return fmt.Sprintf("https://oss-%s.aliyuncs.com", region)
+	}
+
 }
 
 // getEcsRegionID return ecs region id
 func getEcsRegionID(config map[string]string) string {
-	if value := config[regionConfigKey]; value == "" {
-		if value, err := getMetaData(metadataRegionKey); err != nil || value == "" {
-			// set default region
-			return "cn-hangzhou"
-		} else {
-			return value
-		}
-	} else {
-		return value
+	region := config[regionConfigKey]
+	if region != "" {
+		return region
 	}
+
+	if MetaRegion != "" {
+		return MetaRegion
+	}
+	region, err := MetaClient.GetRegionId(context.Background())
+	if err != nil {
+		klog.Errorf("get MetaRegion failed with error: %v", err)
+		return ""
+	}
+
+	klog.Infof("set MetaRegion to %s", region)
+	MetaRegion = region
+	return region
 }
 
 // getRamRole return ramrole name
-func getRamRole () (string, error) {
-	subpath := "ram/security-credentials/"
-	roleName, err := GetMetaData(subpath)
-	if err != nil {
-		return "", err
-	}
-	return roleName, nil
+func getRamRole() (string, error) {
+	return MetaClient.GetRoleName(context.Background())
 }
 
-//getSTSAK return AccessKeyID, AccessKeySecret and SecurityToken
+// getSTSAK return AccessKeyID, AccessKeySecret and SecurityToken
 func getSTSAK(ramrole string) (string, string, string, error) {
 	// AliyunCSVeleroRole
-	roleAuth := RoleAuth{}
-	ramRoleURL := fmt.Sprintf("ram/security-credentials/%s", ramrole)
-	roleInfo, err := GetMetaData(ramRoleURL)
+	ctx := context.Background()
+	roleInfo, err := MetaClient.GetRoleCredentials(ctx, ramrole)
 	if err != nil {
 		return "", "", "", err
 	}
-
-	err = json.Unmarshal([]byte(roleInfo), &roleAuth)
-	if err != nil {
-		return "", "", "", err
-	}
-	return roleAuth.AccessKeyID, roleAuth.AccessKeySecret, roleAuth.SecurityToken, nil
+	return roleInfo.AccessKeyId, roleInfo.AccessKeySecret, roleInfo.SecurityToken, nil
 }
 
-//GetMetaData get metadata from ecs meta-server
-func GetMetaData(resource string) (string, error) {
-	resp, err := http.Get(metadataURL + resource)
-	if err != nil {
-		return "", err
+// credentials holds OSS authentication credentials
+type credentials struct {
+	accessKeyID     string
+	accessKeySecret string
+	stsToken        string
+	ramRole         string
+}
+
+// getCredentials retrieves OSS credentials based on the environment and configuration
+// It supports multiple authentication methods:
+// 1. Load credentials from file (if ALIBABA_CLOUD_CREDENTIALS_FILE is set) and/or environment variables
+// 2. For ACK environments: fallback to RAM role credentials if env credentials are not available
+// 3. For non-ACK environments: return error if env credentials are not available
+func getCredentials(veleroForAck bool) (*credentials, error) {
+	cred := &credentials{}
+
+	// Step 1: Load credentials from file if specified (this may set env vars)
+	if err := loadCredentialFileFromEnv(); err != nil {
+		return nil, err
 	}
-	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
+
+	// Step 1.2: Get credentials from environment variables
+	// These may be set by loadCredentialFileFromEnv or directly by the user
+	cred.accessKeyID = os.Getenv("ALIBABA_CLOUD_ACCESS_KEY_ID")
+	cred.accessKeySecret = os.Getenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET")
+	cred.stsToken = os.Getenv("ALIBABA_CLOUD_ACCESS_STS_TOKEN") // Token may be empty
+
+	// Step 1.3: If we have both accessKeyID and accessKeySecret, we can return
+	if len(cred.accessKeyID) != 0 && len(cred.accessKeySecret) != 0 {
+		return cred, nil
 	}
-	return string(body), nil
+
+	// Step 2: Handle cases where credentials are not available from env
+	if !veleroForAck {
+		// For non-ACK environment: if credentials are not available, return error
+		return nil, errors.Errorf("ALIBABA_CLOUD_ACCESS_KEY_ID or ALIBABA_CLOUD_ACCESS_KEY_SECRET environment variable is not set")
+	}
+
+	// For ACK environment: try to get credentials from RAM role
+	ramRole, err := getRamRole()
+	if err != nil {
+		return nil, errors.Errorf("Failed to get ram role with err: %v", err)
+	}
+	cred.ramRole = ramRole
+	cred.accessKeyID, cred.accessKeySecret, cred.stsToken, err = getSTSAK(ramRole)
+	if err != nil {
+		return nil, errors.Errorf("Failed to get sts token from ram role %s with err: %v", ramRole, err)
+	}
+	return cred, nil
 }
 
 func updateOssClient(ramRole string, endpoint string, client bucketGetter) (bucketGetter, error) {

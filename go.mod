@@ -3,6 +3,7 @@ module github.com/AliyunContainerService/velero-plugin
 go 1.24.5
 
 require (
+	github.com/AliyunContainerService/ack-ram-tool/pkg/ecsmetadata v0.0.10
 	github.com/aliyun/alibaba-cloud-sdk-go v1.62.0
 	github.com/aliyun/aliyun-oss-go-sdk v2.2.7+incompatible
 	github.com/joho/godotenv v1.5.1
@@ -12,6 +13,8 @@ require (
 	github.com/vmware-tanzu/velero v1.17.1
 	k8s.io/api v0.33.3
 	k8s.io/apimachinery v0.33.3
+	k8s.io/client-go v0.33.3
+	k8s.io/klog/v2 v2.130.1
 )
 
 require (
@@ -56,7 +59,6 @@ require (
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.65.0 // indirect
 	github.com/prometheus/procfs v0.15.1 // indirect
-	github.com/spf13/afero v1.10.0 // indirect
 	github.com/spf13/cobra v1.8.1 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
@@ -77,8 +79,6 @@ require (
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/apiextensions-apiserver v0.33.3 // indirect
-	k8s.io/client-go v0.33.3 // indirect
-	k8s.io/klog/v2 v2.130.1 // indirect
 	k8s.io/kube-openapi v0.0.0-20250318190949-c8a335a9a2ff // indirect
 	k8s.io/utils v0.0.0-20241104100929-3ea5e8cea738 // indirect
 	sigs.k8s.io/controller-runtime v0.21.0 // indirect

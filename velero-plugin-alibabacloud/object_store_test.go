@@ -86,7 +86,7 @@ func TestObjectExists(t *testing.T) {
 			name:           "error checking for existence",
 			errorResponse:  errors.New("bad"),
 			expectedExists: false,
-			expectedError:  "bad",
+			expectedError:  "failed to check if object key exists in bucket bucket: bad",
 		},
 	}
 
