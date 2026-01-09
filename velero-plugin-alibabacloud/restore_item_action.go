@@ -15,7 +15,6 @@ type RestoreItemAction struct {
 	log logrus.FieldLogger
 }
 
-//
 func newRestoreItemAction(logger logrus.FieldLogger) *RestoreItemAction {
 	return &RestoreItemAction{log: logger}
 }
@@ -67,9 +66,7 @@ func (p *RestoreItemAction) Execute(input *velero.RestoreItemActionExecuteInput)
 		volSizeBytes := capacity.Value()
 		if int64(volSizeBytes) <= int64(minReqVolSizeBytes) {
 			p.log.Warnf("Alibaba disk volume request at least 20Gi, auto resize persistentVolumeClaim to 20Gi.")
-			pvc.Spec.Resources = corev1api.ResourceRequirements{
-				Requests: getResourceList(minReqVolSizeString),
-			}
+			pvc.Spec.Resources.Requests = getResourceList(minReqVolSizeString)
 			pvc.Status = corev1api.PersistentVolumeClaimStatus{}
 			inputMap, err = runtime.DefaultUnstructuredConverter.ToUnstructured(&pvc)
 			if err != nil {
