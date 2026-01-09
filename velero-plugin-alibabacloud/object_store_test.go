@@ -36,8 +36,8 @@ type mockBucket struct {
 	mock.Mock
 }
 
-func (m *mockBucket) IsObjectExist(key string) (bool, error) {
-	args := m.Called(key)
+func (m *mockBucket) IsObjectExist(key string, options ...oss.Option) (bool, error) {
+	args := m.Called(key, options)
 	return args.Get(0).(bool), args.Error(1)
 }
 
@@ -55,8 +55,8 @@ func (m *mockBucket) PutObject(key string, reader io.Reader, options ...oss.Opti
 	return args.Error(0)
 }
 
-func (m *mockBucket) DeleteObject(key string) error {
-	args := m.Called(key)
+func (m *mockBucket) DeleteObject(key string, options ...oss.Option) error {
+	args := m.Called(key, options)
 	return args.Error(0)
 }
 
@@ -103,7 +103,7 @@ func TestObjectExists(t *testing.T) {
 			defer bucket.AssertExpectations(t)
 
 			client.On("Bucket", "bucket").Return(bucket, nil)
-			bucket.On("IsObjectExist", "key").Return(tc.expectedExists, tc.errorResponse)
+			bucket.On("IsObjectExist", "key", mock.Anything).Return(tc.expectedExists, tc.errorResponse)
 
 			exists, err := o.ObjectExists("bucket", "key")
 

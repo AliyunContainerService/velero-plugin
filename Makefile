@@ -1,4 +1,4 @@
-# Copyright 2017, 2019 the Velero contributors.
+# Copyright the Velero contributors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,14 +13,24 @@
 # limitations under the License.
 
 # The binary to build (just the basename).
-BIN ?= $(wildcard velero-*)
+BIN ?= velero-plugin-alibabacloud
 
-# This repo's root import path (under GOPATH).
-PKG := github.com/heptio/velero-plugin-example
+# This repo's root import path.
+PKG := github.com/AliyunContainerService/velero-plugin
 
-BUILD_IMAGE ?= golang:1.12-stretch
+# Where to push the docker image.
+REGISTRY ?= velero
 
-IMAGE ?= gcr.io/heptio-images/velero-plugin-example
+# Image name
+IMAGE ?= $(REGISTRY)/$(BIN)
+
+# We allow the Dockerfile to be configurable to enable the use of custom Dockerfiles
+# that pull base images from different registries.
+VELERO_DOCKERFILE ?= Dockerfile
+
+# Container runtime to use (docker or podman)
+# Default to docker, but can be overridden with CONTAINER_RUNTIME=podman
+CONTAINER_RUNTIME ?= docker
 
 # Which architecture to build - see $(ALL_ARCH) for options.
 # if the 'local' rule is being run, detect the ARCH from 'go env'
@@ -28,72 +38,146 @@ IMAGE ?= gcr.io/heptio-images/velero-plugin-example
 local : ARCH ?= $(shell go env GOOS)-$(shell go env GOARCH)
 ARCH ?= linux-amd64
 
+VERSION ?= main
+
+TAG_LATEST ?= false
+
+ifeq ($(TAG_LATEST), true)
+	IMAGE_TAGS ?= $(IMAGE):$(VERSION) $(IMAGE):latest
+else
+	IMAGE_TAGS ?= $(IMAGE):$(VERSION)
+endif
+
+# Detect buildx support based on container runtime
+ifeq ($(CONTAINER_RUNTIME), podman)
+	# Podman 4.0+ supports buildx, but multi-arch support may be limited
+	# Check if podman buildx is available
+	ifeq ($(shell $(CONTAINER_RUNTIME) buildx version 2>/dev/null | head -n1),)
+		BUILDX_ENABLED ?= false
+		PODMAN_MULTIARCH ?= false
+	else
+		BUILDX_ENABLED ?= true
+		# Podman may not fully support multi-arch, so we'll use single arch for podman
+		PODMAN_MULTIARCH ?= false
+	endif
+else
+	# Docker buildx detection
+	ifeq ($(shell $(CONTAINER_RUNTIME) buildx inspect 2>/dev/null | awk '/Status/ { print $$2 }'), running)
+		BUILDX_ENABLED ?= true
+	else
+		BUILDX_ENABLED ?= false
+	endif
+	PODMAN_MULTIARCH ?= false
+endif
+
+define BUILDX_ERROR
+buildx not enabled, refusing to run this recipe
+see: https://velero.io/docs/main/build-from-source/#making-images-and-updating-velero for more info
+endef
+
+CLI_PLATFORMS ?= linux-amd64 linux-arm linux-arm64 darwin-amd64 darwin-arm64 windows-amd64 linux-ppc64le
+# Convert ARCH format (linux-amd64) to platform format (linux/amd64) for buildx
+BUILDX_PLATFORMS ?= $(subst -,/,$(ARCH))
+BUILDX_OUTPUT_TYPE ?= docker
+
+# set git sha and tree state
+GIT_SHA = $(shell git rev-parse HEAD)
+ifneq ($(shell git status --porcelain 2> /dev/null),)
+	GIT_TREE_STATE ?= dirty
+else
+	GIT_TREE_STATE ?= clean
+endif
+
+###
+### These variables should not need tweaking.
+###
+
 platform_temp = $(subst -, ,$(ARCH))
 GOOS = $(word 1, $(platform_temp))
 GOARCH = $(word 2, $(platform_temp))
-
-all: $(addprefix build-, $(BIN))
-
-build-%:
-	$(MAKE) --no-print-directory BIN=$* build
+# GOPROXY can be set to use a custom proxy (e.g., https://goproxy.cn for China)
+GOPROXY ?= https://proxy.golang.org
 
 local: build-dirs
 	GOOS=$(GOOS) \
 	GOARCH=$(GOARCH) \
+	VERSION=$(VERSION) \
+	REGISTRY=$(REGISTRY) \
 	PKG=$(PKG) \
 	BIN=$(BIN) \
+	GIT_SHA=$(GIT_SHA) \
+	GIT_TREE_STATE=$(GIT_TREE_STATE) \
 	OUTPUT_DIR=$$(pwd)/_output/bin/$(GOOS)/$(GOARCH) \
 	./hack/build.sh
 
-build: _output/bin/$(GOOS)/$(GOARCH)/$(BIN)
+# test runs unit tests using 'go test' in the local environment.
+test:
+	CGO_ENABLED=0 go test -v -coverprofile=coverage.out -timeout 60s ./...
 
-_output/bin/$(GOOS)/$(GOARCH)/$(BIN): build-dirs
-	@echo "building: $@"
-	$(MAKE) shell CMD="-c '\
-		GOOS=$(GOOS) \
-		GOARCH=$(GOARCH) \
-		PKG=$(PKG) \
-		BIN=$(BIN) \
-		OUTPUT_DIR=/output/$(GOOS)/$(GOARCH) \
-		./hack/build.sh'"
+# ci is a convenience target for CI builds.
+ci: verify-modules test
 
-TTY := $(shell tty -s && echo "-t")
-
-shell: build-dirs 
-	@echo "running docker: $@"
-	@docker run \
-		-e GOFLAGS \
-		-i $(TTY) \
-		--rm \
-		-u $$(id -u):$$(id -g) \
-		-v $$(pwd)/.go/pkg:/go/pkg \
-		-v $$(pwd)/.go/src:/go/src \
-		-v $$(pwd)/.go/std:/go/std \
-		-v $$(pwd):/go/src/$(PKG) \
-		-v $$(pwd)/.go/std/$(GOOS)_$(GOARCH):/usr/local/go/pkg/$(GOOS)_$(GOARCH)_static \
-		-v "$$(pwd)/.go/go-build:/.cache/go-build:delegated" \
-		-e CGO_ENABLED=0 \
-		-w /go/src/$(PKG) \
-		$(BUILD_IMAGE) \
-		go build -installsuffix "static" -i -v -o _output/bin/$(GOOS)/$(GOARCH)/$(BIN) ./$(BIN)
+container:
+	@if [ "$(CONTAINER_RUNTIME)" = "podman" ]; then \
+		echo "building with $(CONTAINER_RUNTIME) (single architecture: $(BUILDX_PLATFORMS))"; \
+		$(CONTAINER_RUNTIME) build --pull \
+			--platform $(BUILDX_PLATFORMS) \
+			$(addprefix -t , $(IMAGE_TAGS)) \
+			--build-arg=GOPROXY=$(GOPROXY) \
+			--build-arg=PKG=$(PKG) \
+			--build-arg=BIN=$(BIN) \
+			--build-arg=VERSION=$(VERSION) \
+			--build-arg=GIT_SHA=$(GIT_SHA) \
+			--build-arg=GIT_TREE_STATE=$(GIT_TREE_STATE) \
+			--build-arg=REGISTRY=$(REGISTRY) \
+			-f $(VELERO_DOCKERFILE) .; \
+		echo "container: $(IMAGE):$(VERSION)"; \
+	else \
+		if [ "$(BUILDX_ENABLED)" != "true" ]; then \
+			echo "buildx not enabled, refusing to run this recipe"; \
+			echo "see: https://velero.io/docs/main/build-from-source/#making-images-and-updating-velero for more info"; \
+			exit 1; \
+		fi; \
+		echo "building with $(CONTAINER_RUNTIME) buildx (platform: $(BUILDX_PLATFORMS))"; \
+		$(CONTAINER_RUNTIME) buildx build --pull \
+			--output=type=$(BUILDX_OUTPUT_TYPE) \
+			--platform $(BUILDX_PLATFORMS) \
+			$(addprefix -t , $(IMAGE_TAGS)) \
+			--build-arg=GOPROXY=$(GOPROXY) \
+			--build-arg=PKG=$(PKG) \
+			--build-arg=BIN=$(BIN) \
+			--build-arg=VERSION=$(VERSION) \
+			--build-arg=GIT_SHA=$(GIT_SHA) \
+			--build-arg=GIT_TREE_STATE=$(GIT_TREE_STATE) \
+			--build-arg=REGISTRY=$(REGISTRY) \
+			-f $(VELERO_DOCKERFILE) .; \
+		echo "container: $(IMAGE):$(VERSION)"; \
+		if [ "$(BUILDX_OUTPUT_TYPE)_$(REGISTRY)" = "registry_velero" ]; then \
+			$(CONTAINER_RUNTIME) pull $(IMAGE):$(VERSION); \
+			rm -f $(BIN)-$(VERSION).tar; \
+			$(CONTAINER_RUNTIME) save $(IMAGE):$(VERSION) -o $(BIN)-$(VERSION).tar; \
+			gzip -f $(BIN)-$(VERSION).tar; \
+		fi; \
+	fi
 
 build-dirs:
 	@mkdir -p _output/bin/$(GOOS)/$(GOARCH)
-	@mkdir -p .go/src/$(PKG) .go/pkg .go/bin .go/std/$(GOOS)/$(GOARCH) .go/go-build
 
-container: all
-	cp Dockerfile _output/bin/$(GOOS)/$(GOARCH)/Dockerfile
-	docker build -t $(IMAGE) -f _output/bin/$(GOOS)/$(GOARCH)/Dockerfile _output/bin/$(GOOS)/$(GOARCH)
+.PHONY: modules
+modules:
+	go mod tidy
 
-all-ci: $(addprefix ci-, $(BIN))
+.PHONY: verify-modules
+verify-modules: modules
+	@if !(git diff --quiet HEAD -- go.sum go.mod); then \
+		echo "go module files are out of date, please commit the changes to go.mod and go.sum"; exit 1; \
+	fi
 
-ci-%:
-	$(MAKE) --no-print-directory BIN=$* ci
 
-ci:
-	mkdir -p _output
-	CGO_ENABLED=0 go build -v -o _output/bin/$(GOOS)/$(GOARCH)/$(BIN) ./$(BIN)
+changelog:
+	hack/release-tools/changelog.sh
 
+# clean removes build artifacts from the local environment.
 clean:
 	@echo "cleaning"
-	rm -rf .go _output
+	rm -rf _output

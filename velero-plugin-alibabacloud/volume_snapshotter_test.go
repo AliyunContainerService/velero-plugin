@@ -19,14 +19,19 @@ import (
 	"testing"
 
 	"github.com/aliyun/alibaba-cloud-sdk-go/services/ecs"
+	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
-
-	"github.com/heptio/velero/pkg/test"
 )
+
+func newTestLogger() logrus.FieldLogger {
+	logger := logrus.New()
+	logger.SetLevel(logrus.ErrorLevel)
+	return logger
+}
 
 func TestGetJSONArrayString(t *testing.T) {
 	result := getJSONArrayString("d-test")
@@ -34,7 +39,7 @@ func TestGetJSONArrayString(t *testing.T) {
 }
 
 func TestGetVolumeIDFlexVolume(t *testing.T) {
-	b := NewVolumeSnapshotter(test.NewLogger())
+	b := newVolumeSnapshotter(newTestLogger())
 
 	pv := &unstructured.Unstructured{
 		Object: map[string]interface{}{},
@@ -119,7 +124,7 @@ func TestSetVolumeIDFlexVolume(t *testing.T) {
 }
 
 func TestGetVolumeID(t *testing.T) {
-	b := NewVolumeSnapshotter(test.NewLogger())
+	b := newVolumeSnapshotter(newTestLogger())
 
 	pv := &unstructured.Unstructured{
 		Object: map[string]interface{}{},
