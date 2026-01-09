@@ -17,16 +17,26 @@ limitations under the License.
 package main
 
 import (
+	"os"
+
 	"github.com/sirupsen/logrus"
 	veleroplugin "github.com/vmware-tanzu/velero/pkg/plugin/framework"
 )
 
 func main() {
-	veleroplugin.NewServer().
-		RegisterObjectStore("velero.io/alibabacloud", newAlibabaCloudObjectStore).
-		RegisterVolumeSnapshotter("velero.io/alibabacloud", newAlibabaCloudVolumeSnapshotter).
-		RegisterRestoreItemAction("velero.io/alibabacloud", newAlibabaCloudRestoreItemAction).
-		Serve()
+	useFlex := os.Getenv("USE_FLEXVOLUME") == "true"
+	if useFlex {
+		veleroplugin.NewServer().
+			RegisterObjectStore("velero.io/alibabacloud", newAlibabaCloudObjectStore).
+			RegisterVolumeSnapshotter("velero.io/alibabacloud", newAlibabaCloudVolumeSnapshotter).
+			RegisterRestoreItemAction("velero.io/alibabacloud", newAlibabaCloudRestoreItemAction).
+			Serve()
+	} else {
+		veleroplugin.NewServer().
+			RegisterObjectStore("velero.io/alibabacloud", newAlibabaCloudObjectStore).
+			RegisterVolumeSnapshotter("velero.io/alibabacloud", newAlibabaCloudVolumeSnapshotter).
+			Serve()
+	}
 }
 
 func newAlibabaCloudObjectStore(logger logrus.FieldLogger) (interface{}, error) {

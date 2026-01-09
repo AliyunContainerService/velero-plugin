@@ -57,59 +57,24 @@ func (p *RestoreItemAction) Execute(input *velero.RestoreItemActionExecuteInput)
 	metadata.SetAnnotations(annotations)
 
 	switch kind {
-	case persistentVolumeClaimKey:
-		var pvc corev1api.PersistentVolumeClaim
-		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(input.Item.UnstructuredContent(), &pvc); err != nil {
-			return nil, errors.WithStack(err)
-		}
-		capacity := pvc.Spec.Resources.Requests[corev1api.ResourceName(corev1api.ResourceStorage)]
-		volSizeBytes := capacity.Value()
-		if int64(volSizeBytes) <= int64(minReqVolSizeBytes) {
-			p.log.Warnf("Alibaba disk volume request at least 20Gi, auto resize persistentVolumeClaim to 20Gi.")
-			pvc.Spec.Resources.Requests = getResourceList(minReqVolSizeString)
-			pvc.Status = corev1api.PersistentVolumeClaimStatus{}
-			inputMap, err = runtime.DefaultUnstructuredConverter.ToUnstructured(&pvc)
-			if err != nil {
-				return nil, errors.WithStack(err)
-			}
-		}
 	case persistentVolumeKey:
 		var pv corev1api.PersistentVolume
 		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(input.Item.UnstructuredContent(), &pv); err != nil {
 			return nil, errors.WithStack(err)
 		}
-		capacity := pv.Spec.Capacity[corev1api.ResourceName(corev1api.ResourceStorage)]
-		volSizeBytes := capacity.Value()
-		if int64(volSizeBytes) <= int64(minReqVolSizeBytes) {
-			p.log.Warnf("Alibaba disk volume request at least 20Gi, auto resize persistentVolume to 20Gi.")
-			persistentVolumeSource := pv.Spec.PersistentVolumeSource
-			accessModes := pv.Spec.AccessModes
-			claimRef := pv.Spec.ClaimRef
-			persistentVolumeReclaimPolicy := pv.Spec.PersistentVolumeReclaimPolicy
-			storageClassName := pv.Spec.StorageClassName
-			mountOptions := pv.Spec.MountOptions
-			volumeMode := pv.Spec.VolumeMode
-			nodeAffinity := pv.Spec.NodeAffinity
 
-			pv.Spec = corev1api.PersistentVolumeSpec{
-				Capacity:                      getResourceList(minReqVolSizeString),
-				PersistentVolumeSource:        persistentVolumeSource,
-				AccessModes:                   accessModes,
-				ClaimRef:                      claimRef,
-				PersistentVolumeReclaimPolicy: persistentVolumeReclaimPolicy,
-				StorageClassName:              storageClassName,
-				MountOptions:                  mountOptions,
-				VolumeMode:                    volumeMode,
-				NodeAffinity:                  nodeAffinity,
-			}
-			pv.Status = corev1api.PersistentVolumeStatus{}
-			inputMap, err = runtime.DefaultUnstructuredConverter.ToUnstructured(&pv)
-			if err != nil {
-				return nil, errors.WithStack(err)
-			}
+		if pv.Spec.FlexVolume != nil && pv.Spec.FlexVolume.Options != nil && pv.Spec.FlexVolume.Options[OriginStr] != "" {
+			pv.Spec.FlexVolume.Options[TargetStr] = pv.Spec.FlexVolume.Options[OriginStr]
+			p.log.Info("Modify FlexVolume options for PV")
 		}
+
+		inputMap, err = runtime.DefaultUnstructuredConverter.ToUnstructured(&pv)
+		if err != nil {
+			return nil, errors.WithStack(err)
+		}
+
 	default:
-		p.log.Info("Nothing need to do, skip")
+		// do nothing
 	}
 	return velero.NewRestoreItemActionExecuteOutput(&unstructured.Unstructured{Object: inputMap}), nil
 }
