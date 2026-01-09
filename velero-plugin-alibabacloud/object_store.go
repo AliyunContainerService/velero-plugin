@@ -14,25 +14,70 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"io"
 	"os"
+	"strings"
 	"time"
 
-	"github.com/aliyun/aliyun-oss-go-sdk/oss"
+	ossv2 "github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss"
+	"github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss/credentials"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 
 	veleroplugin "github.com/vmware-tanzu/velero/pkg/plugin/framework"
 )
 
+// ossClientInterface defines the interface for OSS client operations
+// This allows for easier testing with mocks
+type ossClientInterface interface {
+	PutObject(ctx context.Context, request *ossv2.PutObjectRequest, optFns ...func(*ossv2.Options)) (*ossv2.PutObjectResult, error)
+	HeadObject(ctx context.Context, request *ossv2.HeadObjectRequest, optFns ...func(*ossv2.Options)) (*ossv2.HeadObjectResult, error)
+	GetObject(ctx context.Context, request *ossv2.GetObjectRequest, optFns ...func(*ossv2.Options)) (*ossv2.GetObjectResult, error)
+	ListObjectsV2(ctx context.Context, request *ossv2.ListObjectsV2Request, optFns ...func(*ossv2.Options)) (*ossv2.ListObjectsV2Result, error)
+	DeleteObject(ctx context.Context, request *ossv2.DeleteObjectRequest, optFns ...func(*ossv2.Options)) (*ossv2.DeleteObjectResult, error)
+	Presign(ctx context.Context, request any, optFns ...func(*ossv2.PresignOptions)) (*ossv2.PresignResult, error)
+}
+
+// ossClientWrapper wraps ossv2.Client to implement ossClientInterface
+type ossClientWrapper struct {
+	client *ossv2.Client
+}
+
+func (w *ossClientWrapper) PutObject(ctx context.Context, request *ossv2.PutObjectRequest, optFns ...func(*ossv2.Options)) (*ossv2.PutObjectResult, error) {
+	return w.client.PutObject(ctx, request, optFns...)
+}
+
+func (w *ossClientWrapper) HeadObject(ctx context.Context, request *ossv2.HeadObjectRequest, optFns ...func(*ossv2.Options)) (*ossv2.HeadObjectResult, error) {
+	return w.client.HeadObject(ctx, request, optFns...)
+}
+
+func (w *ossClientWrapper) GetObject(ctx context.Context, request *ossv2.GetObjectRequest, optFns ...func(*ossv2.Options)) (*ossv2.GetObjectResult, error) {
+	return w.client.GetObject(ctx, request, optFns...)
+}
+
+func (w *ossClientWrapper) ListObjectsV2(ctx context.Context, request *ossv2.ListObjectsV2Request, optFns ...func(*ossv2.Options)) (*ossv2.ListObjectsV2Result, error) {
+	return w.client.ListObjectsV2(ctx, request, optFns...)
+}
+
+func (w *ossClientWrapper) DeleteObject(ctx context.Context, request *ossv2.DeleteObjectRequest, optFns ...func(*ossv2.Options)) (*ossv2.DeleteObjectResult, error) {
+	return w.client.DeleteObject(ctx, request, optFns...)
+}
+
+func (w *ossClientWrapper) Presign(ctx context.Context, request any, optFns ...func(*ossv2.PresignOptions)) (*ossv2.PresignResult, error) {
+	return w.client.Presign(ctx, request, optFns...)
+}
+
 // ObjectStore represents an object storage entity
 type ObjectStore struct {
 	log             logrus.FieldLogger
-	client          bucketGetter
+	client          ossClientInterface
 	encryptionKeyID string
 	privateKey      []byte
 	ramRole         string
 	endpoint        string
+	region          string
+	rawClient       *ossv2.Client // Keep raw client for updateOssClient
 }
 
 // newObjectStore init ObjectStore
@@ -52,7 +97,13 @@ func (o *ObjectStore) Init(config map[string]string) error {
 		return errors.Wrapf(err, "failed to validate object store config keys")
 	}
 
-	o.endpoint = getOssEndpoint(config)
+	region := getEcsRegionID(config)
+	if region == "" {
+		region = DefaultRegion
+	}
+	o.region = region
+
+	o.endpoint = getOssEndpoint(region, config)
 	o.encryptionKeyID = os.Getenv("ALIBABA_CLOUD_ENCRYPTION_KEY_ID")
 
 	veleroForAck := os.Getenv("VELERO_FOR_ACK") == "true"
@@ -62,90 +113,93 @@ func (o *ObjectStore) Init(config map[string]string) error {
 	}
 
 	o.ramRole = cred.ramRole
-	client, err := o.getOssClient(cred)
+	rawClient, err := o.getOssClient(cred)
 	if err != nil {
 		return errors.Wrapf(err, "failed to create OSS client")
 	}
 
-	o.client = &ossBucketGetter{
-		client,
-	}
+	o.rawClient = rawClient
+	o.client = &ossClientWrapper{client: rawClient}
 	return nil
 }
 
 // PutObject creates a new object using the data in body within the specified
 // object storage bucket with the given key.
 func (o *ObjectStore) PutObject(bucket, key string, body io.Reader) error {
-	bucketObj, err := o.getBucket(bucket)
+	// Update OSS client if needed (for STS token refresh)
+	if err := o.updateOssClient(); err != nil {
+		return errors.Wrapf(err, "failed to update OSS client for putting object %s", key)
+	}
+
+	ctx := context.Background()
+	request := &ossv2.PutObjectRequest{
+		Bucket: ossv2.Ptr(bucket),
+		Key:    ossv2.Ptr(key),
+		Body:   body,
+	}
+
+	if o.encryptionKeyID != "" {
+		request.ServerSideEncryption = ossv2.Ptr("KMS")
+		request.ServerSideEncryptionKeyId = ossv2.Ptr(o.encryptionKeyID)
+	}
+
+	_, err := o.client.PutObject(ctx, request)
 	if err != nil {
-		return errors.Wrapf(err, "failed to get bucket %s for putting object %s", bucket, key)
-	}
-
-	if o.encryptionKeyID == "" {
-		if err := bucketObj.PutObject(key, body); err != nil {
-			return errors.Wrapf(err, "failed to put object %s to bucket %s", key, bucket)
+		if o.encryptionKeyID != "" {
+			return errors.Wrapf(err, "failed to put object %s to bucket %s with encryption", key, bucket)
 		}
-		return nil
-	}
-
-	if err := bucketObj.PutObject(key, body,
-		oss.ServerSideEncryption("KMS"),
-		oss.ServerSideEncryptionKeyID(o.encryptionKeyID)); err != nil {
-		return errors.Wrapf(err, "failed to put object %s to bucket %s with encryption", key, bucket)
+		return errors.Wrapf(err, "failed to put object %s to bucket %s", key, bucket)
 	}
 	return nil
 }
 
 // ObjectExists checks if there is an object with the given key in the object storage bucket.
 func (o *ObjectStore) ObjectExists(bucket, key string) (bool, error) {
-	bucketObj, err := o.getBucket(bucket)
-	if err != nil {
-		return false, errors.Wrapf(err, "failed to get bucket %s for checking object %s", bucket, key)
+	// Update OSS client if needed (for STS token refresh)
+	if err := o.updateOssClient(); err != nil {
+		return false, errors.Wrapf(err, "failed to update OSS client for checking object %s", key)
 	}
 
-	var exists bool
-	if o.encryptionKeyID == "" {
-		var err error
-		exists, err = bucketObj.IsObjectExist(key)
-		if err != nil {
-			return false, errors.Wrapf(err, "failed to check if object %s exists in bucket %s", key, bucket)
+	ctx := context.Background()
+	request := &ossv2.HeadObjectRequest{
+		Bucket: ossv2.Ptr(bucket),
+		Key:    ossv2.Ptr(key),
+	}
+
+	// Note: V2 SDK handles encryption automatically based on client config
+	// If encryption is needed, it should be configured at client level
+	_, err := o.client.HeadObject(ctx, request)
+	if err != nil {
+		// Check if it's a 404 error (object doesn't exist)
+		if strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "NoSuchKey") {
+			return false, nil
 		}
-		return exists, nil
+		return false, errors.Wrapf(err, "failed to check if object %s exists in bucket %s", key, bucket)
 	}
-
-	exists, err = bucketObj.IsObjectExist(key,
-		oss.ServerSideEncryption("KMS"),
-		oss.ServerSideEncryptionKeyID(o.encryptionKeyID))
-	if err != nil {
-		return false, errors.Wrapf(err, "failed to check if object %s exists in bucket %s with encryption", key, bucket)
-	}
-	return exists, nil
+	return true, nil
 }
 
 // GetObject retrieves the object with the given key from the specified
 // bucket in object storage.
 func (o *ObjectStore) GetObject(bucket, key string) (io.ReadCloser, error) {
-	bucketObj, err := o.getBucket(bucket)
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to get bucket %s for getting object %s", bucket, key)
+	// Update OSS client if needed (for STS token refresh)
+	if err := o.updateOssClient(); err != nil {
+		return nil, errors.Wrapf(err, "failed to update OSS client for getting object %s", key)
 	}
 
-	var body io.ReadCloser
-	if o.encryptionKeyID == "" {
-		body, err = bucketObj.GetObject(key)
-		if err != nil {
-			return nil, errors.Wrapf(err, "failed to get object %s from bucket %s", key, bucket)
-		}
-		return body, nil
+	ctx := context.Background()
+	request := &ossv2.GetObjectRequest{
+		Bucket: ossv2.Ptr(bucket),
+		Key:    ossv2.Ptr(key),
 	}
 
-	body, err = bucketObj.GetObject(key,
-		oss.ServerSideEncryption("KMS"),
-		oss.ServerSideEncryptionKeyID(o.encryptionKeyID))
+	// Note: V2 SDK handles encryption automatically based on client config
+	// If encryption is needed, it should be configured at client level
+	result, err := o.client.GetObject(ctx, request)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to get object %s from bucket %s with encryption", key, bucket)
+		return nil, errors.Wrapf(err, "failed to get object %s from bucket %s", key, bucket)
 	}
-	return body, nil
+	return result.Body, nil
 }
 
 // ListCommonPrefixes gets a list of all object key prefixes that start with
@@ -161,20 +215,42 @@ func (o *ObjectStore) GetObject(bucket, key string) (io.ReadCloser, error) {
 // and the provided prefix arg is "a-prefix/", and the delimiter is "/",
 // this will return the slice {"a-prefix/foo-1/", "a-prefix/foo-2/"}.
 func (o *ObjectStore) ListCommonPrefixes(bucket, prefix, delimiter string) ([]string, error) {
-	bucketObj, err := o.getBucket(bucket)
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to get bucket %s", bucket)
+	// Update OSS client if needed (for STS token refresh)
+	if err := o.updateOssClient(); err != nil {
+		return nil, errors.Wrapf(err, "failed to update OSS client for listing common prefixes")
 	}
+
+	ctx := context.Background()
 	var res []string
-	continueToken := ""
+	continuationToken := ""
+	maxKeys := int32(50)
+
 	for {
-		lor, err := bucketObj.ListObjectsV2(oss.Prefix(prefix), oss.Delimiter(delimiter), oss.MaxKeys(50), oss.ContinuationToken(continueToken))
+		request := &ossv2.ListObjectsV2Request{
+			Bucket:    ossv2.Ptr(bucket),
+			Prefix:    ossv2.Ptr(prefix),
+			Delimiter: ossv2.Ptr(delimiter),
+			MaxKeys:   maxKeys,
+		}
+		if continuationToken != "" {
+			request.ContinuationToken = ossv2.Ptr(continuationToken)
+		}
+
+		result, err := o.client.ListObjectsV2(ctx, request)
 		if err != nil {
 			return res, errors.Wrapf(err, "failed to list objects with prefix %s in bucket %s", prefix, bucket)
 		}
-		res = append(res, lor.CommonPrefixes...)
-		if lor.IsTruncated {
-			continueToken = lor.NextContinuationToken
+
+		if result.CommonPrefixes != nil {
+			for _, cp := range result.CommonPrefixes {
+				if cp.Prefix != nil {
+					res = append(res, *cp.Prefix)
+				}
+			}
+		}
+
+		if result.IsTruncated && result.NextContinuationToken != nil {
+			continuationToken = *result.NextContinuationToken
 		} else {
 			break
 		}
@@ -186,23 +262,41 @@ func (o *ObjectStore) ListCommonPrefixes(bucket, prefix, delimiter string) ([]st
 // ListObjects gets a list of all keys in the specified bucket
 // that have the given prefix.
 func (o *ObjectStore) ListObjects(bucket, prefix string) ([]string, error) {
-	bucketObj, err := o.getBucket(bucket)
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to get bucket %s", bucket)
+	// Update OSS client if needed (for STS token refresh)
+	if err := o.updateOssClient(); err != nil {
+		return nil, errors.Wrapf(err, "failed to update OSS client for listing objects")
 	}
 
+	ctx := context.Background()
 	var res []string
-	continueToken := ""
+	continuationToken := ""
+	maxKeys := int32(50)
+
 	for {
-		lor, err := bucketObj.ListObjectsV2(oss.Prefix(prefix), oss.MaxKeys(50), oss.ContinuationToken(continueToken))
+		request := &ossv2.ListObjectsV2Request{
+			Bucket:  ossv2.Ptr(bucket),
+			Prefix:  ossv2.Ptr(prefix),
+			MaxKeys: maxKeys,
+		}
+		if continuationToken != "" {
+			request.ContinuationToken = ossv2.Ptr(continuationToken)
+		}
+
+		result, err := o.client.ListObjectsV2(ctx, request)
 		if err != nil {
 			return res, errors.Wrapf(err, "failed to list objects with prefix %s in bucket %s", prefix, bucket)
 		}
-		for _, obj := range lor.Objects {
-			res = append(res, obj.Key)
+
+		if result.Contents != nil {
+			for _, obj := range result.Contents {
+				if obj.Key != nil {
+					res = append(res, *obj.Key)
+				}
+			}
 		}
-		if lor.IsTruncated {
-			continueToken = lor.NextContinuationToken
+
+		if result.IsTruncated && result.NextContinuationToken != nil {
+			continuationToken = *result.NextContinuationToken
 		} else {
 			break
 		}
@@ -214,11 +308,19 @@ func (o *ObjectStore) ListObjects(bucket, prefix string) ([]string, error) {
 // DeleteObject removes the object with the specified key from the given
 // bucket.
 func (o *ObjectStore) DeleteObject(bucket, key string) error {
-	bucketObj, err := o.getBucket(bucket)
-	if err != nil {
-		return errors.Wrapf(err, "failed to get bucket %s", bucket)
+	// Update OSS client if needed (for STS token refresh)
+	if err := o.updateOssClient(); err != nil {
+		return errors.Wrapf(err, "failed to update OSS client for deleting object %s", key)
 	}
-	if err := bucketObj.DeleteObject(key); err != nil {
+
+	ctx := context.Background()
+	request := &ossv2.DeleteObjectRequest{
+		Bucket: ossv2.Ptr(bucket),
+		Key:    ossv2.Ptr(key),
+	}
+
+	_, err := o.client.DeleteObject(ctx, request)
+	if err != nil {
 		return errors.Wrapf(err, "failed to delete object %s from bucket %s", key, bucket)
 	}
 	return nil
@@ -226,75 +328,94 @@ func (o *ObjectStore) DeleteObject(bucket, key string) error {
 
 // CreateSignedURL creates a pre-signed URL for the given bucket and key that expires after ttl.
 func (o *ObjectStore) CreateSignedURL(bucket, key string, ttl time.Duration) (string, error) {
-	bucketObj, err := o.getBucket(bucket)
-	if err != nil {
-		return "", errors.Wrapf(err, "failed to get bucket %s for creating signed URL for object %s", bucket, key)
+	// Update OSS client if needed (for STS token refresh)
+	if err := o.updateOssClient(); err != nil {
+		return "", errors.Wrapf(err, "failed to update OSS client for creating signed URL")
 	}
 
-	url, err := bucketObj.SignURL(key, oss.HTTPGet, int64(ttl.Seconds()))
+	ctx := context.Background()
+	request := &ossv2.GetObjectRequest{
+		Bucket: ossv2.Ptr(bucket),
+		Key:    ossv2.Ptr(key),
+	}
+
+	result, err := o.client.Presign(ctx, request, ossv2.PresignExpires(ttl))
 	if err != nil {
 		return "", errors.Wrapf(err, "failed to create signed URL for object %s in bucket %s", key, bucket)
 	}
-	return url, nil
-}
-
-// ============================================================================
-// Internal interfaces and types (not part of Velero plugin interface)
-// ============================================================================
-
-type bucketGetter interface {
-	Bucket(bucket string) (ossBucket, error)
-}
-
-type ossBucket interface {
-	IsObjectExist(key string, options ...oss.Option) (bool, error)
-	ListObjectsV2(options ...oss.Option) (oss.ListObjectsResultV2, error)
-	PutObject(objectKey string, reader io.Reader, options ...oss.Option) error
-	GetObject(key string, options ...oss.Option) (io.ReadCloser, error)
-	DeleteObject(key string, options ...oss.Option) error
-	SignURL(objectKey string, method oss.HTTPMethod, expiredInSec int64, options ...oss.Option) (string, error)
-}
-
-type ossBucketGetter struct {
-	client *oss.Client
-}
-
-func (getter *ossBucketGetter) Bucket(bucket string) (ossBucket, error) {
-	return getter.client.Bucket(bucket)
+	return result.URL, nil
 }
 
 // ============================================================================
 // ObjectStore internal utility functions (not part of Velero plugin interface)
 // ============================================================================
 
-// getBucket gets a bucket object, updating OSS client if needed
-func (o *ObjectStore) getBucket(bucket string) (ossBucket, error) {
-	var err error
-	// TODO: Review the updateOssClient logic - consider caching and refresh strategy for STS tokens
-	// AWS plugin uses credential chain and automatic refresh, we may need similar logic
-	o.client, err = updateOssClient(o.ramRole, o.endpoint, o.client)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to update OSS Client")
+// newCredentialsProvider creates a credentials provider from access key, secret, and optional STS token
+func newCredentialsProvider(accessKeyID, accessKeySecret, stsToken string) credentials.CredentialsProvider {
+	if len(stsToken) == 0 {
+		return credentials.NewStaticCredentialsProvider(accessKeyID, accessKeySecret)
 	}
-	bucketObj, err := o.client.Bucket(bucket)
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to get OSS bucket %s", bucket)
+	return credentials.NewStaticCredentialsProvider(accessKeyID, accessKeySecret, stsToken)
+}
+
+// buildOssConfig builds OSS client configuration with credentials, endpoint, and region
+// V2 SDK supports both Region+Endpoint or just Endpoint (like V1)
+func buildOssConfig(credProvider credentials.CredentialsProvider, endpoint, region string) (*ossv2.Config, error) {
+	cfg := ossv2.LoadDefaultConfig().
+		WithCredentialsProvider(credProvider)
+
+	// If endpoint is specified, use it directly (like V1 behavior)
+	// Otherwise, use region to let SDK construct the endpoint
+	if endpoint != "" {
+		cfg = cfg.WithEndpoint(endpoint)
+		// If endpoint is specified, we still need region for some operations
+		if region != "" {
+			cfg = cfg.WithRegion(region)
+		}
+	} else if region != "" {
+		cfg = cfg.WithRegion(region)
+	} else {
+		return nil, errors.New("either endpoint or region must be specified")
 	}
-	return bucketObj, nil
+
+	return cfg, nil
 }
 
 // getOssClient creates a new OSS client using the provided credentials
 // This function only handles OSS client initialization, credentials should be obtained separately
-func (o *ObjectStore) getOssClient(cred *credentials) (*oss.Client, error) {
-	var client *oss.Client
-	var err error
-	if len(cred.stsToken) == 0 {
-		client, err = oss.New(o.endpoint, cred.accessKeyID, cred.accessKeySecret)
-	} else {
-		client, err = oss.New(o.endpoint, cred.accessKeyID, cred.accessKeySecret, oss.SecurityToken(cred.stsToken))
-	}
+// V2 SDK supports both Region+Endpoint or just Endpoint (like V1)
+func (o *ObjectStore) getOssClient(cred *ossCredentials) (*ossv2.Client, error) {
+	credProvider := newCredentialsProvider(cred.accessKeyID, cred.accessKeySecret, cred.stsToken)
+	cfg, err := buildOssConfig(credProvider, o.endpoint, o.region)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to create OSS client with endpoint %s", o.endpoint)
+		return nil, errors.Wrapf(err, "failed to build OSS config")
 	}
+
+	client := ossv2.NewClient(cfg)
 	return client, nil
+}
+
+// updateOssClient updates OSS client with new STS token if RAM role is provided
+func (o *ObjectStore) updateOssClient() error {
+	if len(o.ramRole) == 0 {
+		return nil
+	}
+
+	accessKeyID, accessKeySecret, stsToken, err := getSTSAK(o.ramRole)
+	if err != nil {
+		return errors.Wrapf(err, "failed to get STS token for RAM role %s", o.ramRole)
+	}
+	cred := &ossCredentials{
+		accessKeyID:     accessKeyID,
+		accessKeySecret: accessKeySecret,
+		stsToken:        stsToken,
+	}
+	client, err := o.getOssClient(cred)
+	if err != nil {
+		return errors.Wrapf(err, "failed to update OSS client")
+	}
+
+	o.rawClient = client
+	o.client = &ossClientWrapper{client: o.rawClient}
+	return nil
 }

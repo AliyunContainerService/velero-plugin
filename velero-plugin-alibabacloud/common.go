@@ -6,7 +6,6 @@ import (
 	"os"
 
 	"github.com/AliyunContainerService/ack-ram-tool/pkg/ecsmetadata"
-	"github.com/aliyun/aliyun-oss-go-sdk/oss"
 	"github.com/joho/godotenv"
 	"github.com/pkg/errors"
 	"k8s.io/klog/v2"
@@ -53,13 +52,12 @@ func loadCredentialFileFromEnv() error {
 // return oss public endpoint in format "oss-%s.aliyuncs.com"
 // return oss accelerate endpoint in format "oss-accelerate.aliyuncs.com"
 // return oss internal endpoint in format "oss-%s-internal.aliyuncs.com"
-func getOssEndpoint(config map[string]string) string {
+func getOssEndpoint(region string, config map[string]string) string {
 
 	if endpoint := config[endpointConfigKey]; endpoint != "" {
 		return endpoint
 	}
 
-	region := getEcsRegionID(config)
 	if region == "" {
 		region = DefaultRegion
 	}
@@ -113,8 +111,8 @@ func getSTSAK(ramrole string) (string, string, string, error) {
 	return roleInfo.AccessKeyId, roleInfo.AccessKeySecret, roleInfo.SecurityToken, nil
 }
 
-// credentials holds OSS authentication credentials
-type credentials struct {
+// ossCredentials holds OSS authentication credentials
+type ossCredentials struct {
 	accessKeyID     string
 	accessKeySecret string
 	stsToken        string
@@ -126,8 +124,8 @@ type credentials struct {
 // 1. Load credentials from file (if ALIBABA_CLOUD_CREDENTIALS_FILE is set) and/or environment variables
 // 2. For ACK environments: fallback to RAM role credentials if env credentials are not available
 // 3. For non-ACK environments: return error if env credentials are not available
-func getCredentials(veleroForAck bool) (*credentials, error) {
-	cred := &credentials{}
+func getCredentials(veleroForAck bool) (*ossCredentials, error) {
+	cred := &ossCredentials{}
 
 	// Step 1: Load credentials from file if specified (this may set env vars)
 	if err := loadCredentialFileFromEnv(); err != nil {
@@ -162,22 +160,4 @@ func getCredentials(veleroForAck bool) (*credentials, error) {
 		return nil, errors.Errorf("Failed to get sts token from ram role %s with err: %v", ramRole, err)
 	}
 	return cred, nil
-}
-
-func updateOssClient(ramRole string, endpoint string, client bucketGetter) (bucketGetter, error) {
-	bucketGetter := &ossBucketGetter{}
-	if len(ramRole) == 0 {
-		return client, nil
-	}
-	accessKeyID, accessKeySecret, stsToken, err := getSTSAK(ramRole)
-	if err != nil {
-		return nil, err
-	}
-	ossClient, err := oss.New(endpoint, accessKeyID, accessKeySecret, oss.SecurityToken(stsToken))
-	if err != nil {
-		return nil, err
-	}
-
-	bucketGetter.client = ossClient
-	return bucketGetter, err
 }

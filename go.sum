@@ -2,8 +2,8 @@ github.com/AliyunContainerService/ack-ram-tool/pkg/ecsmetadata v0.0.10 h1:03PGMq
 github.com/AliyunContainerService/ack-ram-tool/pkg/ecsmetadata v0.0.10/go.mod h1:QM3VKYNyD5thMEWqKef+uOfpNmZG7RjG7wOsCdavj9w=
 github.com/aliyun/alibaba-cloud-sdk-go v1.62.0 h1:YoBmomaMS5xWvUqg0e8sAfQsbP26R8BLNx3NuN3jgj8=
 github.com/aliyun/alibaba-cloud-sdk-go v1.62.0/go.mod h1:Api2AkmMgGaSUAhmk76oaFObkoeCPc/bKAqcyplPODs=
-github.com/aliyun/aliyun-oss-go-sdk v2.2.7+incompatible h1:KpbJFXwhVeuxNtBJ74MCGbIoaBok2uZvkD7QXp2+Wis=
-github.com/aliyun/aliyun-oss-go-sdk v2.2.7+incompatible/go.mod h1:T/Aws4fEfogEE9v+HPhhw+CntffsBHJ8nXQCwKr0/g8=
+github.com/aliyun/alibabacloud-oss-go-sdk-v2 v1.3.0 h1:wQlqotpyjYPjJz+Noh5bRu7Snmydk8SKC5Z6u1CR20Y=
+github.com/aliyun/alibabacloud-oss-go-sdk-v2 v1.3.0/go.mod h1:FTzydeQVmR24FI0D6XWUOMKckjXehM/jgMn1xC+DA9M=
 github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=
 github.com/beorn7/perks v1.0.1/go.mod h1:G2ZrVWU2WbWT9wwq4/hrbKbnv/1ERSJQ0ibhJ6rlkpw=
 github.com/blang/semver/v4 v4.0.0 h1:1PFHFE6yCCTv8C1TeyNNarDzntLi7wMI5i/pzqYIsAM=
