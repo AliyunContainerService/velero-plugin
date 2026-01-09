@@ -14,55 +14,175 @@ limitations under the License.
 package main
 
 import (
-	"io"
+	"context"
+	"strings"
 	"testing"
 
-	"github.com/aliyun/aliyun-oss-go-sdk/oss"
+	ossv2 "github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss"
+	"github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss/credentials"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
 
-type mockBucketGetter struct {
+// mockOSSClient is a mock implementation of ossClientInterface for testing
+type mockOSSClient struct {
 	mock.Mock
 }
 
-func (m *mockBucketGetter) Bucket(bucket string) (ossBucket, error) {
-	args := m.Called(bucket)
-	return args.Get(0).(ossBucket), args.Error(1)
+func (m *mockOSSClient) PutObject(ctx context.Context, request *ossv2.PutObjectRequest, optFns ...func(*ossv2.Options)) (*ossv2.PutObjectResult, error) {
+	args := m.Called(ctx, request)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*ossv2.PutObjectResult), args.Error(1)
 }
 
-type mockBucket struct {
-	mock.Mock
+func (m *mockOSSClient) HeadObject(ctx context.Context, request *ossv2.HeadObjectRequest, optFns ...func(*ossv2.Options)) (*ossv2.HeadObjectResult, error) {
+	args := m.Called(ctx, request)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*ossv2.HeadObjectResult), args.Error(1)
 }
 
-func (m *mockBucket) IsObjectExist(key string, options ...oss.Option) (bool, error) {
-	args := m.Called(key, options)
-	return args.Get(0).(bool), args.Error(1)
+func (m *mockOSSClient) GetObject(ctx context.Context, request *ossv2.GetObjectRequest, optFns ...func(*ossv2.Options)) (*ossv2.GetObjectResult, error) {
+	args := m.Called(ctx, request)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*ossv2.GetObjectResult), args.Error(1)
 }
 
-func (m *mockBucket) ListObjects(options ...oss.Option) (oss.ListObjectsResult, error) {
-	args := m.Called(options)
-	return args.Get(0).(oss.ListObjectsResult), args.Error(1)
+func (m *mockOSSClient) ListObjectsV2(ctx context.Context, request *ossv2.ListObjectsV2Request, optFns ...func(*ossv2.Options)) (*ossv2.ListObjectsV2Result, error) {
+	args := m.Called(ctx, request)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*ossv2.ListObjectsV2Result), args.Error(1)
 }
 
-func (m *mockBucket) GetObject(key string, options ...oss.Option) (io.ReadCloser, error) {
-	args := m.Called(key, options)
-	return args.Get(0).(io.ReadCloser), args.Error(1)
-}
-func (m *mockBucket) PutObject(key string, reader io.Reader, options ...oss.Option) error {
-	args := m.Called(key, reader, options)
-	return args.Error(0)
-}
-
-func (m *mockBucket) DeleteObject(key string, options ...oss.Option) error {
-	args := m.Called(key, options)
-	return args.Error(0)
+func (m *mockOSSClient) DeleteObject(ctx context.Context, request *ossv2.DeleteObjectRequest, optFns ...func(*ossv2.Options)) (*ossv2.DeleteObjectResult, error) {
+	args := m.Called(ctx, request)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*ossv2.DeleteObjectResult), args.Error(1)
 }
 
-func (m *mockBucket) SignURL(objectKey string, method oss.HTTPMethod, expiredInSec int64, options ...oss.Option) (string, error) {
-	args := m.Called(objectKey, method, expiredInSec, options)
-	return args.Get(0).(string), args.Error(1)
+func (m *mockOSSClient) Presign(ctx context.Context, request any, optFns ...func(*ossv2.PresignOptions)) (*ossv2.PresignResult, error) {
+	args := m.Called(ctx, request)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*ossv2.PresignResult), args.Error(1)
+}
+
+func TestNewCredentialsProvider(t *testing.T) {
+	tests := []struct {
+		name            string
+		accessKeyID     string
+		accessKeySecret string
+		stsToken        string
+		expectToken     bool
+	}{
+		{
+			name:            "without STS token",
+			accessKeyID:     "test-ak",
+			accessKeySecret: "test-sk",
+			stsToken:        "",
+			expectToken:     false,
+		},
+		{
+			name:            "with STS token",
+			accessKeyID:     "test-ak",
+			accessKeySecret: "test-sk",
+			stsToken:        "test-token",
+			expectToken:     true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			provider := newCredentialsProvider(tc.accessKeyID, tc.accessKeySecret, tc.stsToken)
+			assert.NotNil(t, provider)
+
+			// Verify provider can get credentials
+			ctx := context.Background()
+			creds, err := provider.GetCredentials(ctx)
+			assert.NoError(t, err)
+			assert.Equal(t, tc.accessKeyID, creds.AccessKeyID)
+			assert.Equal(t, tc.accessKeySecret, creds.AccessKeySecret)
+			if tc.expectToken {
+				assert.Equal(t, tc.stsToken, creds.SecurityToken)
+			} else {
+				assert.Empty(t, creds.SecurityToken)
+			}
+		})
+	}
+}
+
+func TestBuildOssConfig(t *testing.T) {
+	// Create a test credentials provider
+	credProvider := credentials.NewStaticCredentialsProvider("test-ak", "test-sk")
+
+	tests := []struct {
+		name          string
+		endpoint      string
+		region        string
+		expectedError string
+		validate      func(t *testing.T, cfg *ossv2.Config)
+	}{
+		{
+			name:     "with endpoint and region",
+			endpoint: "https://oss-cn-hangzhou.aliyuncs.com",
+			region:   "cn-hangzhou",
+			validate: func(t *testing.T, cfg *ossv2.Config) {
+				assert.NotNil(t, cfg)
+			},
+		},
+		{
+			name:     "with endpoint only",
+			endpoint: "https://oss-cn-hangzhou.aliyuncs.com",
+			region:   "",
+			validate: func(t *testing.T, cfg *ossv2.Config) {
+				assert.NotNil(t, cfg)
+			},
+		},
+		{
+			name:     "with region only",
+			endpoint: "",
+			region:   "cn-beijing",
+			validate: func(t *testing.T, cfg *ossv2.Config) {
+				assert.NotNil(t, cfg)
+			},
+		},
+		{
+			name:          "without endpoint and region",
+			endpoint:      "",
+			region:        "",
+			expectedError: "either endpoint or region must be specified",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := buildOssConfig(credProvider, tc.endpoint, tc.region)
+
+			if tc.expectedError != "" {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tc.expectedError)
+				assert.Nil(t, cfg)
+				return
+			}
+
+			assert.NoError(t, err)
+			assert.NotNil(t, cfg)
+			if tc.validate != nil {
+				tc.validate(t, cfg)
+			}
+		})
+	}
 }
 
 func TestObjectExists(t *testing.T) {
@@ -79,7 +199,7 @@ func TestObjectExists(t *testing.T) {
 		},
 		{
 			name:           "doesn't exist",
-			errorResponse:  errors.New("not found"),
+			errorResponse:  errors.New("404"),
 			expectedExists: false,
 		},
 		{
@@ -92,18 +212,21 @@ func TestObjectExists(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			client := new(mockBucketGetter)
+			client := new(mockOSSClient)
 			defer client.AssertExpectations(t)
 
 			o := &ObjectStore{
 				client: client,
 			}
 
-			bucket := new(mockBucket)
-			defer bucket.AssertExpectations(t)
-
-			client.On("Bucket", "bucket").Return(bucket, nil)
-			bucket.On("IsObjectExist", "key", mock.Anything).Return(tc.expectedExists, tc.errorResponse)
+			// Mock HeadObject call
+			if tc.errorResponse == nil {
+				client.On("HeadObject", mock.Anything, mock.Anything).Return(&ossv2.HeadObjectResult{}, nil)
+			} else if strings.Contains(tc.errorResponse.Error(), "404") {
+				client.On("HeadObject", mock.Anything, mock.Anything).Return(nil, tc.errorResponse)
+			} else {
+				client.On("HeadObject", mock.Anything, mock.Anything).Return(nil, tc.errorResponse)
+			}
 
 			exists, err := o.ObjectExists("bucket", "key")
 

@@ -26,39 +26,51 @@ import (
 func TestGetOssEndpoint(t *testing.T) {
 	tests := []struct {
 		name     string
+		region   string
 		config   map[string]string
 		expected string
 	}{
 		{
 			name:     "custom endpoint",
+			region:   "cn-hangzhou",
 			config:   map[string]string{endpointConfigKey: "https://custom.oss.com"},
 			expected: "https://custom.oss.com",
 		},
 		{
 			name:     "internal network",
-			config:   map[string]string{networkTypeConfigKey: networkTypeInternal, regionConfigKey: "cn-hangzhou"},
+			region:   "cn-hangzhou",
+			config:   map[string]string{networkTypeConfigKey: networkTypeInternal},
 			expected: "https://oss-cn-hangzhou-internal.aliyuncs.com",
 		},
 		{
 			name:     "accelerate network",
+			region:   "cn-hangzhou",
 			config:   map[string]string{networkTypeConfigKey: networkTypeAccelerate},
 			expected: "https://oss-accelerate.aliyuncs.com",
 		},
 		{
 			name:     "public network with region",
-			config:   map[string]string{regionConfigKey: "cn-beijing"},
+			region:   "cn-beijing",
+			config:   map[string]string{},
 			expected: "https://oss-cn-beijing.aliyuncs.com",
 		},
 		{
-			name:     "public network default region",
+			name:     "public network default region when region is empty",
+			region:   "",
 			config:   map[string]string{},
 			expected: "https://oss-cn-hangzhou.aliyuncs.com",
+		},
+		{
+			name:     "public network with different region",
+			region:   "cn-shanghai",
+			config:   map[string]string{},
+			expected: "https://oss-cn-shanghai.aliyuncs.com",
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result := getOssEndpoint(tc.config)
+			result := getOssEndpoint(tc.region, tc.config)
 			assert.Equal(t, tc.expected, result)
 		})
 	}
@@ -70,7 +82,7 @@ func TestGetCredentials(t *testing.T) {
 		veleroForAck  bool
 		setupEnv      func(*testing.T)
 		expectedError string
-		validateCred  func(*testing.T, *credentials)
+		validateCred  func(*testing.T, *ossCredentials)
 	}{
 		{
 			name:         "success: get credentials from env directly",
@@ -81,7 +93,7 @@ func TestGetCredentials(t *testing.T) {
 				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "test-sk")
 				t.Setenv("ALIBABA_CLOUD_ACCESS_STS_TOKEN", "")
 			},
-			validateCred: func(t *testing.T, cred *credentials) {
+			validateCred: func(t *testing.T, cred *ossCredentials) {
 				assert.Equal(t, "test-ak", cred.accessKeyID)
 				assert.Equal(t, "test-sk", cred.accessKeySecret)
 				assert.Empty(t, cred.stsToken)
@@ -97,7 +109,7 @@ func TestGetCredentials(t *testing.T) {
 				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "test-sk")
 				t.Setenv("ALIBABA_CLOUD_ACCESS_STS_TOKEN", "test-token")
 			},
-			validateCred: func(t *testing.T, cred *credentials) {
+			validateCred: func(t *testing.T, cred *ossCredentials) {
 				assert.Equal(t, "test-ak", cred.accessKeyID)
 				assert.Equal(t, "test-sk", cred.accessKeySecret)
 				assert.Equal(t, "test-token", cred.stsToken)
@@ -129,7 +141,7 @@ ALIBABA_CLOUD_ACCESS_STS_TOKEN=file-token
 					os.RemoveAll(tmpDir)
 				})
 			},
-			validateCred: func(t *testing.T, cred *credentials) {
+			validateCred: func(t *testing.T, cred *ossCredentials) {
 				assert.Equal(t, "file-ak", cred.accessKeyID)
 				assert.Equal(t, "file-sk", cred.accessKeySecret)
 				assert.Equal(t, "file-token", cred.stsToken)

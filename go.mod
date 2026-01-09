@@ -5,7 +5,7 @@ go 1.24.5
 require (
 	github.com/AliyunContainerService/ack-ram-tool/pkg/ecsmetadata v0.0.10
 	github.com/aliyun/alibaba-cloud-sdk-go v1.62.0
-	github.com/aliyun/aliyun-oss-go-sdk v2.2.7+incompatible
+	github.com/aliyun/alibabacloud-oss-go-sdk-v2 v1.3.0
 	github.com/joho/godotenv v1.5.1
 	github.com/pkg/errors v0.9.1
 	github.com/sirupsen/logrus v1.9.3
@@ -13,7 +13,6 @@ require (
 	github.com/vmware-tanzu/velero v1.17.1
 	k8s.io/api v0.33.3
 	k8s.io/apimachinery v0.33.3
-	k8s.io/client-go v0.33.3
 	k8s.io/klog/v2 v2.130.1
 )
 
@@ -79,6 +78,7 @@ require (
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/apiextensions-apiserver v0.33.3 // indirect
+	k8s.io/client-go v0.33.3 // indirect
 	k8s.io/kube-openapi v0.0.0-20250318190949-c8a335a9a2ff // indirect
 	k8s.io/utils v0.0.0-20241104100929-3ea5e8cea738 // indirect
 	sigs.k8s.io/controller-runtime v0.21.0 // indirect
