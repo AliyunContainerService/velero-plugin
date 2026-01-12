@@ -1,19 +1,38 @@
 # github.com/AliyunContainerService/ack-ram-tool/pkg/ecsmetadata v0.0.10
 ## explicit; go 1.16
 github.com/AliyunContainerService/ack-ram-tool/pkg/ecsmetadata
-# github.com/aliyun/alibaba-cloud-sdk-go v1.62.0
+# github.com/alibabacloud-go/alibabacloud-gateway-spi v0.0.5
+## explicit; go 1.14
+github.com/alibabacloud-go/alibabacloud-gateway-spi/client
+# github.com/alibabacloud-go/darabonba-openapi/v2 v2.1.13
+## explicit; go 1.14
+github.com/alibabacloud-go/darabonba-openapi/v2/client
+github.com/alibabacloud-go/darabonba-openapi/v2/models
+github.com/alibabacloud-go/darabonba-openapi/v2/utils
+# github.com/alibabacloud-go/debug v1.0.1
+## explicit; go 1.18
+github.com/alibabacloud-go/debug/debug
+# github.com/alibabacloud-go/ecs-20140526/v4 v4.26.10
+## explicit; go 1.14
+github.com/alibabacloud-go/ecs-20140526/v4/client
+# github.com/alibabacloud-go/endpoint-util v1.1.0
+## explicit
+github.com/alibabacloud-go/endpoint-util/service
+# github.com/alibabacloud-go/openapi-util v0.1.1
+## explicit; go 1.14
+github.com/alibabacloud-go/openapi-util/service
+# github.com/alibabacloud-go/tea v1.3.13
+## explicit; go 1.14
+github.com/alibabacloud-go/tea/dara
+github.com/alibabacloud-go/tea/tea
+github.com/alibabacloud-go/tea/utils
+# github.com/alibabacloud-go/tea-utils/v2 v2.0.7
+## explicit; go 1.14
+github.com/alibabacloud-go/tea-utils/v2/service
+# github.com/aliyun/alibaba-cloud-sdk-go v1.63.107
 ## explicit; go 1.13
-github.com/aliyun/alibaba-cloud-sdk-go/sdk
-github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth
-github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth/credentials
-github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth/credentials/provider
-github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth/signers
-github.com/aliyun/alibaba-cloud-sdk-go/sdk/endpoints
 github.com/aliyun/alibaba-cloud-sdk-go/sdk/errors
-github.com/aliyun/alibaba-cloud-sdk-go/sdk/requests
-github.com/aliyun/alibaba-cloud-sdk-go/sdk/responses
 github.com/aliyun/alibaba-cloud-sdk-go/sdk/utils
-github.com/aliyun/alibaba-cloud-sdk-go/services/ecs
 # github.com/aliyun/alibabacloud-oss-go-sdk-v2 v1.3.0
 ## explicit; go 1.18
 github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss
@@ -22,12 +41,24 @@ github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss/crypto
 github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss/retry
 github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss/signer
 github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss/transport
+# github.com/aliyun/credentials-go v1.4.5
+## explicit; go 1.14
+github.com/aliyun/credentials-go/credentials
+github.com/aliyun/credentials-go/credentials/internal/http
+github.com/aliyun/credentials-go/credentials/internal/utils
+github.com/aliyun/credentials-go/credentials/providers
+github.com/aliyun/credentials-go/credentials/request
+github.com/aliyun/credentials-go/credentials/response
+github.com/aliyun/credentials-go/credentials/utils
 # github.com/beorn7/perks v1.0.1
 ## explicit; go 1.11
 github.com/beorn7/perks/quantile
 # github.com/cespare/xxhash/v2 v2.3.0
 ## explicit; go 1.11
 github.com/cespare/xxhash/v2
+# github.com/clbanning/mxj/v2 v2.7.0
+## explicit; go 1.15
+github.com/clbanning/mxj/v2
 # github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc
 ## explicit
 github.com/davecgh/go-spew/spew
@@ -156,11 +187,6 @@ github.com/munnerz/goautoneg
 # github.com/oklog/run v1.0.0
 ## explicit
 github.com/oklog/run
-# github.com/opentracing/opentracing-go v1.2.1-0.20220228012449-10b1cf09e00b
-## explicit; go 1.14
-github.com/opentracing/opentracing-go
-github.com/opentracing/opentracing-go/ext
-github.com/opentracing/opentracing-go/log
 # github.com/pkg/errors v0.9.1
 ## explicit
 github.com/pkg/errors
@@ -206,6 +232,9 @@ github.com/stretchr/testify/assert
 github.com/stretchr/testify/assert/yaml
 github.com/stretchr/testify/mock
 github.com/stretchr/testify/require
+# github.com/tjfoc/gmsm v1.4.1
+## explicit; go 1.14
+github.com/tjfoc/gmsm/sm3
 # github.com/vmware-tanzu/velero v1.17.1
 ## explicit; go 1.24.0
 github.com/vmware-tanzu/velero/internal/credentials
@@ -259,7 +288,9 @@ golang.org/x/net/http2
 golang.org/x/net/http2/hpack
 golang.org/x/net/idna
 golang.org/x/net/internal/httpcommon
+golang.org/x/net/internal/socks
 golang.org/x/net/internal/timeseries
+golang.org/x/net/proxy
 golang.org/x/net/trace
 # golang.org/x/oauth2 v0.30.0
 ## explicit; go 1.23.0

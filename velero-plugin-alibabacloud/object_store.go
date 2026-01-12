@@ -17,7 +17,6 @@ import (
 	"context"
 	"io"
 	"os"
-	"strings"
 	"time"
 
 	ossv2 "github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss"
@@ -73,7 +72,6 @@ type ObjectStore struct {
 	log             logrus.FieldLogger
 	client          ossClientInterface
 	encryptionKeyID string
-	privateKey      []byte
 	ramRole         string
 	endpoint        string
 	region          string
@@ -170,9 +168,12 @@ func (o *ObjectStore) ObjectExists(bucket, key string) (bool, error) {
 	// If encryption is needed, it should be configured at client level
 	_, err := o.client.HeadObject(ctx, request)
 	if err != nil {
-		// Check if it's a 404 error (object doesn't exist)
-		if strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "NoSuchKey") {
-			return false, nil
+		// Check if it's a NoSuchKey error (object doesn't exist)
+		var serviceErr *ossv2.ServiceError
+		if errors.As(err, &serviceErr) {
+			if serviceErr.StatusCode == 404 && serviceErr.Code == "NoSuchKey" {
+				return false, nil
+			}
 		}
 		return false, errors.Wrapf(err, "failed to check if object %s exists in bucket %s", key, bucket)
 	}
