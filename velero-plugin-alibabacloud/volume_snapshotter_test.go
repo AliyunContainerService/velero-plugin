@@ -14,13 +14,16 @@ limitations under the License.
 package main
 
 import (
-	"os"
 	"sort"
 	"testing"
 
-	"github.com/aliyun/alibaba-cloud-sdk-go/services/ecs"
+	ecs20140526 "github.com/alibabacloud-go/ecs-20140526/v4/client"
+	"github.com/alibabacloud-go/tea/tea"
+	alicloudErr "github.com/aliyun/alibaba-cloud-sdk-go/sdk/errors"
+	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -31,11 +34,6 @@ func newTestLogger() logrus.FieldLogger {
 	logger := logrus.New()
 	logger.SetLevel(logrus.ErrorLevel)
 	return logger
-}
-
-func TestGetJSONArrayString(t *testing.T) {
-	result := getJSONArrayString("d-test")
-	assert.Equal(t, "[\"d-test\"]", result)
 }
 
 func TestGetVolumeIDFlexVolume(t *testing.T) {
@@ -91,7 +89,7 @@ func TestSetVolumeIDFlexVolume(t *testing.T) {
 	}
 
 	// missing spec.FlexVolume -> no error
-	updatedPV, err := b.SetVolumeID(pv, "vol-updated")
+	_, err := b.SetVolumeID(pv, "vol-updated")
 	require.Error(t, err)
 
 	// happy path
@@ -111,7 +109,7 @@ func TestSetVolumeIDFlexVolume(t *testing.T) {
 		"labels": labels,
 	}
 
-	updatedPV, err = b.SetVolumeID(pv, "vol-updated")
+	updatedPV, err := b.SetVolumeID(pv, "vol-updated")
 
 	require.NoError(t, err)
 
@@ -173,7 +171,7 @@ func TestSetVolumeID(t *testing.T) {
 	}
 
 	// missing spec.CSI -> error
-	updatedPV, err := b.SetVolumeID(pv, "vol-updated")
+	_, err := b.SetVolumeID(pv, "vol-updated")
 	require.Error(t, err)
 
 	// happy path
@@ -192,7 +190,7 @@ func TestSetVolumeID(t *testing.T) {
 		"labels": labels,
 	}
 
-	updatedPV, err = b.SetVolumeID(pv, "vol-updated")
+	updatedPV, err := b.SetVolumeID(pv, "vol-updated")
 
 	require.NoError(t, err)
 
@@ -212,7 +210,7 @@ func TestSetVolumeIDNoZone(t *testing.T) {
 	}
 
 	// missing spec.CSI -> error
-	updatedPV, err := b.SetVolumeID(pv, "vol-updated")
+	_, err := b.SetVolumeID(pv, "vol-updated")
 	require.Error(t, err)
 
 	// happy path
@@ -223,7 +221,7 @@ func TestSetVolumeIDNoZone(t *testing.T) {
 		"csi": csi,
 	}
 
-	updatedPV, err = b.SetVolumeID(pv, "vol-updated")
+	updatedPV, err := b.SetVolumeID(pv, "vol-updated")
 
 	require.NoError(t, err)
 
@@ -239,8 +237,8 @@ func TestGetTagsForCluster(t *testing.T) {
 	tests := []struct {
 		name         string
 		isNameSet    bool
-		snapshotTags []ecs.Tag
-		expected     []ecs.CreateDiskTag
+		snapshotTags []*ecs20140526.DescribeSnapshotsResponseBodySnapshotsSnapshotTagsTag
+		expected     []*ecs20140526.CreateDiskRequestTag
 	}{
 		{
 			name:         "degenerate case (no tags)",
@@ -251,73 +249,136 @@ func TestGetTagsForCluster(t *testing.T) {
 		{
 			name:      "cluster tags exist and remain set",
 			isNameSet: false,
-			snapshotTags: []ecs.Tag{
-				{TagKey: "KubernetesCluster", TagValue: "old-cluster"},
-				{TagKey: "kubernetes.io/cluster/old-cluster", TagValue: "owned"},
-				{TagKey: "alibaba-cloud-key", TagValue: "alibaba-cloud-val"},
+			snapshotTags: []*ecs20140526.DescribeSnapshotsResponseBodySnapshotsSnapshotTagsTag{
+				{TagKey: tea.String("KubernetesCluster"), TagValue: tea.String("old-cluster")},
+				{TagKey: tea.String("kubernetes.io/cluster/old-cluster"), TagValue: tea.String("owned")},
+				{TagKey: tea.String("alibaba-cloud-key"), TagValue: tea.String("alibaba-cloud-val")},
 			},
-			expected: []ecs.CreateDiskTag{
-				{Key: "KubernetesCluster", Value: "old-cluster"},
-				{Key: "kubernetes.io/cluster/old-cluster", Value: "owned"},
-				{Key: "alibaba-cloud-key", Value: "alibaba-cloud-val"},
+			expected: []*ecs20140526.CreateDiskRequestTag{
+				{Key: tea.String("KubernetesCluster"), Value: tea.String("old-cluster")},
+				{Key: tea.String("kubernetes.io/cluster/old-cluster"), Value: tea.String("owned")},
+				{Key: tea.String("alibaba-cloud-key"), Value: tea.String("alibaba-cloud-val")},
 			},
 		},
 		{
 			name:         "cluster tags only get applied",
 			isNameSet:    true,
 			snapshotTags: nil,
-			expected: []ecs.CreateDiskTag{
-				{Key: "KubernetesCluster", Value: "current-cluster"},
-				{Key: "kubernetes.io/cluster/current-cluster", Value: "owned"},
+			expected: []*ecs20140526.CreateDiskRequestTag{
+				{Key: tea.String("KubernetesCluster"), Value: tea.String("current-cluster")},
+				{Key: tea.String("kubernetes.io/cluster/current-cluster"), Value: tea.String("owned")},
 			},
 		},
 		{
 			name:      "non-overlapping cluster and snapshot tags both get applied",
 			isNameSet: true,
-			snapshotTags: []ecs.Tag{
-				{TagKey: "alibaba-cloud-key", TagValue: "alibaba-cloud-val"},
+			snapshotTags: []*ecs20140526.DescribeSnapshotsResponseBodySnapshotsSnapshotTagsTag{
+				{TagKey: tea.String("alibaba-cloud-key"), TagValue: tea.String("alibaba-cloud-val")},
 			},
-			expected: []ecs.CreateDiskTag{
-				{Key: "KubernetesCluster", Value: "current-cluster"},
-				{Key: "kubernetes.io/cluster/current-cluster", Value: "owned"},
-				{Key: "alibaba-cloud-key", Value: "alibaba-cloud-val"},
+			expected: []*ecs20140526.CreateDiskRequestTag{
+				{Key: tea.String("KubernetesCluster"), Value: tea.String("current-cluster")},
+				{Key: tea.String("kubernetes.io/cluster/current-cluster"), Value: tea.String("owned")},
+				{Key: tea.String("alibaba-cloud-key"), Value: tea.String("alibaba-cloud-val")},
 			},
 		},
-		{name: "overlapping cluster tags, current cluster tags take precedence",
+		{
+			name:      "overlapping cluster tags, current cluster tags take precedence",
 			isNameSet: true,
-			snapshotTags: []ecs.Tag{
-				{TagKey: "KubernetesCluster", TagValue: "old-name"},
-				{TagKey: "kubernetes.io/cluster/old-name", TagValue: "owned"},
-				{TagKey: "alibaba-cloud-key", TagValue: "alibaba-cloud-val"},
+			snapshotTags: []*ecs20140526.DescribeSnapshotsResponseBodySnapshotsSnapshotTagsTag{
+				{TagKey: tea.String("KubernetesCluster"), TagValue: tea.String("old-name")},
+				{TagKey: tea.String("kubernetes.io/cluster/old-name"), TagValue: tea.String("owned")},
+				{TagKey: tea.String("alibaba-cloud-key"), TagValue: tea.String("alibaba-cloud-val")},
 			},
-			expected: []ecs.CreateDiskTag{
-				{Key: "KubernetesCluster", Value: "current-cluster"},
-				{Key: "kubernetes.io/cluster/current-cluster", Value: "owned"},
-				{Key: "alibaba-cloud-key", Value: "alibaba-cloud-val"},
+			expected: []*ecs20140526.CreateDiskRequestTag{
+				{Key: tea.String("KubernetesCluster"), Value: tea.String("current-cluster")},
+				{Key: tea.String("kubernetes.io/cluster/current-cluster"), Value: tea.String("owned")},
+				{Key: tea.String("alibaba-cloud-key"), Value: tea.String("alibaba-cloud-val")},
 			},
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			b := newVolumeSnapshotter(newTestLogger())
 			if test.isNameSet {
-				os.Setenv(ackClusterNameKey, "current-cluster")
+				t.Setenv(ackClusterNameKey, "current-cluster")
 			}
-			res := getTagsForCluster(test.snapshotTags)
+			res := b.getTagsForCluster(test.snapshotTags)
 
 			sort.Slice(res, func(i, j int) bool {
-				return res[i].Key < res[j].Key
+				return tea.StringValue(res[i].Key) < tea.StringValue(res[j].Key)
 			})
 
 			sort.Slice(test.expected, func(i, j int) bool {
-				return test.expected[i].Key < test.expected[j].Key
+				return tea.StringValue(test.expected[i].Key) < tea.StringValue(test.expected[j].Key)
 			})
 
-			assert.Equal(t, test.expected, res)
-
-			if test.isNameSet {
-				os.Unsetenv(ackClusterNameKey)
+			assert.Equal(t, len(test.expected), len(res))
+			for i := range test.expected {
+				assert.Equal(t, tea.StringValue(test.expected[i].Key), tea.StringValue(res[i].Key))
+				assert.Equal(t, tea.StringValue(test.expected[i].Value), tea.StringValue(res[i].Value))
 			}
+		})
+	}
+}
+
+func TestGetPerformanceLevelFromIOPS(t *testing.T) {
+	tests := []struct {
+		name     string
+		iops     int64
+		expected string
+	}{
+		{
+			name:     "IOPS less than 10k - PL0",
+			iops:     5000,
+			expected: "PL0",
+		},
+		{
+			name:     "IOPS exactly 10k - PL0",
+			iops:     10000,
+			expected: "PL0",
+		},
+		{
+			name:     "IOPS between 10k and 50k - PL1",
+			iops:     30000,
+			expected: "PL1",
+		},
+		{
+			name:     "IOPS exactly 50k - PL1",
+			iops:     50000,
+			expected: "PL1",
+		},
+		{
+			name:     "IOPS between 50k and 100k - PL2",
+			iops:     80000,
+			expected: "PL2",
+		},
+		{
+			name:     "IOPS exactly 100k - PL2",
+			iops:     100000,
+			expected: "PL2",
+		},
+		{
+			name:     "IOPS between 100k and 1M - PL3",
+			iops:     500000,
+			expected: "PL3",
+		},
+		{
+			name:     "IOPS exactly 1M - PL3",
+			iops:     1000000,
+			expected: "PL3",
+		},
+		{
+			name:     "IOPS greater than 1M - PL3",
+			iops:     2000000,
+			expected: "PL3",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := getPerformanceLevelFromIOPS(test.iops)
+			assert.Equal(t, test.expected, result)
 		})
 	}
 }
@@ -326,8 +387,8 @@ func TestGetTags(t *testing.T) {
 	tests := []struct {
 		name       string
 		veleroTags map[string]string
-		volumeTags []ecs.Tag
-		expected   []ecs.CreateSnapshotTag
+		volumeTags []*ecs20140526.DescribeDisksResponseBodyDisksDiskTagsTag
+		expected   []*ecs20140526.CreateSnapshotRequestTag
 	}{
 		{
 			name:       "degenerate case (no tags)",
@@ -342,32 +403,32 @@ func TestGetTags(t *testing.T) {
 				"velero-key2": "velero-val2",
 			},
 			volumeTags: nil,
-			expected: []ecs.CreateSnapshotTag{
-				{Key: "velero-key1", Value: "velero-val1"},
-				{Key: "velero-key2", Value: "velero-val2"},
+			expected: []*ecs20140526.CreateSnapshotRequestTag{
+				{Key: tea.String("velero-key1"), Value: tea.String("velero-val1")},
+				{Key: tea.String("velero-key2"), Value: tea.String("velero-val2")},
 			},
 		},
 		{
 			name:       "volume tags only get applied",
 			veleroTags: nil,
-			volumeTags: []ecs.Tag{
-				{TagKey: "alibaba-cloud-key1", TagValue: "alibaba-cloud-val1"},
-				{TagKey: "alibaba-cloud-key2", TagValue: "alibaba-cloud-val2"},
+			volumeTags: []*ecs20140526.DescribeDisksResponseBodyDisksDiskTagsTag{
+				{TagKey: tea.String("alibaba-cloud-key1"), TagValue: tea.String("alibaba-cloud-val1")},
+				{TagKey: tea.String("alibaba-cloud-key2"), TagValue: tea.String("alibaba-cloud-val2")},
 			},
-			expected: []ecs.CreateSnapshotTag{
-				{Key: "alibaba-cloud-key1", Value: "alibaba-cloud-val1"},
-				{Key: "alibaba-cloud-key2", Value: "alibaba-cloud-val2"},
+			expected: []*ecs20140526.CreateSnapshotRequestTag{
+				{Key: tea.String("alibaba-cloud-key1"), Value: tea.String("alibaba-cloud-val1")},
+				{Key: tea.String("alibaba-cloud-key2"), Value: tea.String("alibaba-cloud-val2")},
 			},
 		},
 		{
 			name:       "non-overlapping velero and volume tags both get applied",
 			veleroTags: map[string]string{"velero-key": "velero-val"},
-			volumeTags: []ecs.Tag{
-				{TagKey: "alibaba-cloud-key", TagValue: "alibaba-cloud-val"},
+			volumeTags: []*ecs20140526.DescribeDisksResponseBodyDisksDiskTagsTag{
+				{TagKey: tea.String("alibaba-cloud-key"), TagValue: tea.String("alibaba-cloud-val")},
 			},
-			expected: []ecs.CreateSnapshotTag{
-				{Key: "velero-key", Value: "velero-val"},
-				{Key: "alibaba-cloud-key", Value: "alibaba-cloud-val"},
+			expected: []*ecs20140526.CreateSnapshotRequestTag{
+				{Key: tea.String("velero-key"), Value: tea.String("velero-val")},
+				{Key: tea.String("alibaba-cloud-key"), Value: tea.String("alibaba-cloud-val")},
 			},
 		},
 		{
@@ -376,31 +437,584 @@ func TestGetTags(t *testing.T) {
 				"velero-key":      "velero-val",
 				"overlapping-key": "velero-val",
 			},
-			volumeTags: []ecs.Tag{
-				{TagKey: "alibaba-cloud-key", TagValue: "alibaba-cloud-val"},
-				{TagKey: "overlapping-key", TagValue: "alibaba-cloud-val"},
+			volumeTags: []*ecs20140526.DescribeDisksResponseBodyDisksDiskTagsTag{
+				{TagKey: tea.String("alibaba-cloud-key"), TagValue: tea.String("alibaba-cloud-val")},
+				{TagKey: tea.String("overlapping-key"), TagValue: tea.String("alibaba-cloud-val")},
 			},
-			expected: []ecs.CreateSnapshotTag{
-				{Key: "velero-key", Value: "velero-val"},
-				{Key: "overlapping-key", Value: "velero-val"},
-				{Key: "alibaba-cloud-key", Value: "alibaba-cloud-val"},
+			expected: []*ecs20140526.CreateSnapshotRequestTag{
+				{Key: tea.String("velero-key"), Value: tea.String("velero-val")},
+				{Key: tea.String("overlapping-key"), Value: tea.String("velero-val")},
+				{Key: tea.String("alibaba-cloud-key"), Value: tea.String("alibaba-cloud-val")},
 			},
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			res := getTags(test.veleroTags, test.volumeTags)
+			b := newVolumeSnapshotter(newTestLogger())
+			res := b.getTags(test.veleroTags, test.volumeTags)
 
 			sort.Slice(res, func(i, j int) bool {
-				return res[i].Key < res[j].Key
+				return tea.StringValue(res[i].Key) < tea.StringValue(res[j].Key)
 			})
 
 			sort.Slice(test.expected, func(i, j int) bool {
-				return test.expected[i].Key < test.expected[j].Key
+				return tea.StringValue(test.expected[i].Key) < tea.StringValue(test.expected[j].Key)
 			})
 
-			assert.Equal(t, test.expected, res)
+			assert.Equal(t, len(test.expected), len(res))
+			for i := range test.expected {
+				assert.Equal(t, tea.StringValue(test.expected[i].Key), tea.StringValue(res[i].Key))
+				assert.Equal(t, tea.StringValue(test.expected[i].Value), tea.StringValue(res[i].Value))
+			}
+		})
+	}
+}
+
+// mockECSClient is a mock implementation of ecsClientInterface for testing
+type mockECSClient struct {
+	mock.Mock
+}
+
+func (m *mockECSClient) CreateDisk(request *ecs20140526.CreateDiskRequest) (*ecs20140526.CreateDiskResponse, error) {
+	args := m.Called(request)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*ecs20140526.CreateDiskResponse), args.Error(1)
+}
+
+func (m *mockECSClient) CreateSnapshot(request *ecs20140526.CreateSnapshotRequest) (*ecs20140526.CreateSnapshotResponse, error) {
+	args := m.Called(request)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*ecs20140526.CreateSnapshotResponse), args.Error(1)
+}
+
+func (m *mockECSClient) DeleteSnapshot(request *ecs20140526.DeleteSnapshotRequest) (*ecs20140526.DeleteSnapshotResponse, error) {
+	args := m.Called(request)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*ecs20140526.DeleteSnapshotResponse), args.Error(1)
+}
+
+func (m *mockECSClient) DescribeSnapshots(request *ecs20140526.DescribeSnapshotsRequest) (*ecs20140526.DescribeSnapshotsResponse, error) {
+	args := m.Called(request)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*ecs20140526.DescribeSnapshotsResponse), args.Error(1)
+}
+
+func (m *mockECSClient) DescribeDisks(request *ecs20140526.DescribeDisksRequest) (*ecs20140526.DescribeDisksResponse, error) {
+	args := m.Called(request)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*ecs20140526.DescribeDisksResponse), args.Error(1)
+}
+
+func TestCreateSnapshot(t *testing.T) {
+	tests := []struct {
+		name          string
+		volumeID      string
+		volumeAZ      string
+		tags          map[string]string
+		mockSetup     func(*mockECSClient)
+		expectedID    string
+		expectedError string
+	}{
+		{
+			name:     "success - create snapshot with tags",
+			volumeID: "d-123456",
+			volumeAZ: "cn-hangzhou-h",
+			tags: map[string]string{
+				"velero-backup": "backup-123",
+			},
+			mockSetup: func(m *mockECSClient) {
+				diskResponse := &ecs20140526.DescribeDisksResponse{
+					Body: &ecs20140526.DescribeDisksResponseBody{
+						Disks: &ecs20140526.DescribeDisksResponseBodyDisks{
+							Disk: []*ecs20140526.DescribeDisksResponseBodyDisksDisk{
+								{
+									DiskId: tea.String("d-123456"),
+									Tags: &ecs20140526.DescribeDisksResponseBodyDisksDiskTags{
+										Tag: []*ecs20140526.DescribeDisksResponseBodyDisksDiskTagsTag{
+											{TagKey: tea.String("existing-tag"), TagValue: tea.String("existing-value")},
+										},
+									},
+								},
+							},
+						},
+					},
+				}
+				m.On("DescribeDisks", mock.Anything).Return(diskResponse, nil)
+
+				snapshotResponse := &ecs20140526.CreateSnapshotResponse{
+					Body: &ecs20140526.CreateSnapshotResponseBody{
+						SnapshotId: tea.String("s-123456"),
+					},
+				}
+				m.On("CreateSnapshot", mock.Anything).Return(snapshotResponse, nil)
+			},
+			expectedID: "s-123456",
+		},
+		{
+			name:     "error - describe disk fails",
+			volumeID: "d-123456",
+			volumeAZ: "cn-hangzhou-h",
+			tags:     map[string]string{},
+			mockSetup: func(m *mockECSClient) {
+				m.On("DescribeDisks", mock.Anything).Return(nil, errors.New("describe disk failed"))
+			},
+			expectedError: "failed to describe volume d-123456 for creating snapshot",
+		},
+		{
+			name:     "error - create snapshot fails",
+			volumeID: "d-123456",
+			volumeAZ: "cn-hangzhou-h",
+			tags:     map[string]string{},
+			mockSetup: func(m *mockECSClient) {
+				diskResponse := &ecs20140526.DescribeDisksResponse{
+					Body: &ecs20140526.DescribeDisksResponseBody{
+						Disks: &ecs20140526.DescribeDisksResponseBodyDisks{
+							Disk: []*ecs20140526.DescribeDisksResponseBodyDisksDisk{
+								{
+									DiskId: tea.String("d-123456"),
+									Tags: &ecs20140526.DescribeDisksResponseBodyDisksDiskTags{
+										Tag: []*ecs20140526.DescribeDisksResponseBodyDisksDiskTagsTag{},
+									},
+								},
+							},
+						},
+					},
+				}
+				m.On("DescribeDisks", mock.Anything).Return(diskResponse, nil)
+				m.On("CreateSnapshot", mock.Anything).Return(nil, errors.New("create snapshot failed"))
+			},
+			expectedError: "failed to create snapshot for volume d-123456",
+		},
+		{
+			name:     "error - missing snapshot ID in response",
+			volumeID: "d-123456",
+			volumeAZ: "cn-hangzhou-h",
+			tags:     map[string]string{},
+			mockSetup: func(m *mockECSClient) {
+				diskResponse := &ecs20140526.DescribeDisksResponse{
+					Body: &ecs20140526.DescribeDisksResponseBody{
+						Disks: &ecs20140526.DescribeDisksResponseBodyDisks{
+							Disk: []*ecs20140526.DescribeDisksResponseBodyDisksDisk{
+								{
+									DiskId: tea.String("d-123456"),
+									Tags: &ecs20140526.DescribeDisksResponseBodyDisksDiskTags{
+										Tag: []*ecs20140526.DescribeDisksResponseBodyDisksDiskTagsTag{},
+									},
+								},
+							},
+						},
+					},
+				}
+				m.On("DescribeDisks", mock.Anything).Return(diskResponse, nil)
+
+				snapshotResponse := &ecs20140526.CreateSnapshotResponse{
+					Body: &ecs20140526.CreateSnapshotResponseBody{
+						SnapshotId: nil,
+					},
+				}
+				m.On("CreateSnapshot", mock.Anything).Return(snapshotResponse, nil)
+			},
+			expectedError: "create snapshot response missing snapshot ID",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client := new(mockECSClient)
+			defer client.AssertExpectations(t)
+
+			test.mockSetup(client)
+
+			b := &VolumeSnapshotter{
+				log:    newTestLogger(),
+				client: client,
+			}
+
+			snapshotID, err := b.CreateSnapshot(test.volumeID, test.volumeAZ, test.tags)
+
+			if test.expectedError != "" {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), test.expectedError)
+				assert.Empty(t, snapshotID)
+				return
+			}
+
+			assert.NoError(t, err)
+			assert.Equal(t, test.expectedID, snapshotID)
+		})
+	}
+}
+
+func TestDeleteSnapshot(t *testing.T) {
+	client := new(mockECSClient)
+	defer client.AssertExpectations(t)
+
+	response := &ecs20140526.DeleteSnapshotResponse{}
+	client.On("DeleteSnapshot", mock.Anything).Return(response, nil)
+
+	b := &VolumeSnapshotter{
+		log:    newTestLogger(),
+		client: client,
+	}
+
+	err := b.DeleteSnapshot("s-123456")
+	assert.NoError(t, err)
+}
+
+func TestDeleteSnapshot_NotFound(t *testing.T) {
+	client := new(mockECSClient)
+	defer client.AssertExpectations(t)
+
+	serverErr := alicloudErr.NewServerError(404, `{"Code":"InvalidSnapshotId.NotFound","Message":"The specified snapshot does not exist."}`, "")
+	client.On("DeleteSnapshot", mock.Anything).Return(nil, serverErr)
+
+	b := &VolumeSnapshotter{
+		log:    newTestLogger(),
+		client: client,
+	}
+
+	err := b.DeleteSnapshot("s-123456")
+	assert.NoError(t, err)
+}
+
+func TestDeleteSnapshot_Error(t *testing.T) {
+	client := new(mockECSClient)
+	defer client.AssertExpectations(t)
+
+	client.On("DeleteSnapshot", mock.Anything).Return(nil, errors.New("delete failed"))
+
+	b := &VolumeSnapshotter{
+		log:    newTestLogger(),
+		client: client,
+	}
+
+	err := b.DeleteSnapshot("s-123456")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to delete snapshot s-123456")
+}
+
+func TestGetVolumeInfo(t *testing.T) {
+	tests := []struct {
+		name          string
+		volumeID      string
+		volumeAZ      string
+		mockSetup     func(*mockECSClient)
+		expectedType  string
+		expectedIOPS  *int64
+		expectedError string
+	}{
+		{
+			name:     "success - get volume info with IOPS",
+			volumeID: "d-123456",
+			volumeAZ: "cn-hangzhou-h",
+			mockSetup: func(m *mockECSClient) {
+				iops := int32(3000)
+				response := &ecs20140526.DescribeDisksResponse{
+					Body: &ecs20140526.DescribeDisksResponseBody{
+						Disks: &ecs20140526.DescribeDisksResponseBodyDisks{
+							Disk: []*ecs20140526.DescribeDisksResponseBodyDisksDisk{
+								{
+									DiskId:   tea.String("d-123456"),
+									Category: tea.String("cloud_essd"),
+									IOPS:     &iops,
+								},
+							},
+						},
+					},
+				}
+				m.On("DescribeDisks", mock.Anything).Return(response, nil)
+			},
+			expectedType: "cloud_essd",
+			expectedIOPS: func() *int64 { i := int64(3000); return &i }(),
+		},
+		{
+			name:     "success - get volume info without IOPS",
+			volumeID: "d-123456",
+			volumeAZ: "cn-hangzhou-h",
+			mockSetup: func(m *mockECSClient) {
+				response := &ecs20140526.DescribeDisksResponse{
+					Body: &ecs20140526.DescribeDisksResponseBody{
+						Disks: &ecs20140526.DescribeDisksResponseBodyDisks{
+							Disk: []*ecs20140526.DescribeDisksResponseBodyDisksDisk{
+								{
+									DiskId:   tea.String("d-123456"),
+									Category: tea.String("cloud_ssd"),
+									IOPS:     nil,
+								},
+							},
+						},
+					},
+				}
+				m.On("DescribeDisks", mock.Anything).Return(response, nil)
+			},
+			expectedType: "cloud_ssd",
+			expectedIOPS: nil,
+		},
+		{
+			name:     "error - describe disk fails",
+			volumeID: "d-123456",
+			volumeAZ: "cn-hangzhou-h",
+			mockSetup: func(m *mockECSClient) {
+				m.On("DescribeDisks", mock.Anything).Return(nil, errors.New("describe failed"))
+			},
+			expectedError: "failed to describe volume d-123456",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client := new(mockECSClient)
+			defer client.AssertExpectations(t)
+
+			test.mockSetup(client)
+
+			b := &VolumeSnapshotter{
+				log:    newTestLogger(),
+				client: client,
+			}
+
+			volumeType, iops, err := b.GetVolumeInfo(test.volumeID, test.volumeAZ)
+
+			if test.expectedError != "" {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), test.expectedError)
+				return
+			}
+
+			assert.NoError(t, err)
+			assert.Equal(t, test.expectedType, volumeType)
+			if test.expectedIOPS == nil {
+				assert.Nil(t, iops)
+			} else {
+				assert.NotNil(t, iops)
+				assert.Equal(t, *test.expectedIOPS, *iops)
+			}
+		})
+	}
+}
+
+func TestDescribeSnapshot(t *testing.T) {
+	tests := []struct {
+		name          string
+		snapshotID    string
+		mockSetup     func(*mockECSClient)
+		expectedError string
+	}{
+		{
+			name:       "success - describe snapshot",
+			snapshotID: "s-123456",
+			mockSetup: func(m *mockECSClient) {
+				response := &ecs20140526.DescribeSnapshotsResponse{
+					Body: &ecs20140526.DescribeSnapshotsResponseBody{
+						Snapshots: &ecs20140526.DescribeSnapshotsResponseBodySnapshots{
+							Snapshot: []*ecs20140526.DescribeSnapshotsResponseBodySnapshotsSnapshot{
+								{
+									SnapshotId: tea.String("s-123456"),
+									Tags: &ecs20140526.DescribeSnapshotsResponseBodySnapshotsSnapshotTags{
+										Tag: []*ecs20140526.DescribeSnapshotsResponseBodySnapshotsSnapshotTagsTag{
+											{TagKey: tea.String("test-key"), TagValue: tea.String("test-value")},
+										},
+									},
+								},
+							},
+						},
+					},
+				}
+				m.On("DescribeSnapshots", mock.Anything).Return(response, nil)
+			},
+		},
+		{
+			name:       "error - describe snapshot fails",
+			snapshotID: "s-123456",
+			mockSetup: func(m *mockECSClient) {
+				m.On("DescribeSnapshots", mock.Anything).Return(nil, errors.New("describe failed"))
+			},
+			expectedError: "failed to describe snapshot s-123456",
+		},
+		{
+			name:       "error - invalid response (nil body)",
+			snapshotID: "s-123456",
+			mockSetup: func(m *mockECSClient) {
+				response := &ecs20140526.DescribeSnapshotsResponse{
+					Body: nil,
+				}
+				m.On("DescribeSnapshots", mock.Anything).Return(response, nil)
+			},
+			expectedError: "invalid response from DescribeSnapshots",
+		},
+		{
+			name:       "error - wrong number of snapshots",
+			snapshotID: "s-123456",
+			mockSetup: func(m *mockECSClient) {
+				response := &ecs20140526.DescribeSnapshotsResponse{
+					Body: &ecs20140526.DescribeSnapshotsResponseBody{
+						Snapshots: &ecs20140526.DescribeSnapshotsResponseBodySnapshots{
+							Snapshot: []*ecs20140526.DescribeSnapshotsResponseBodySnapshotsSnapshot{
+								{SnapshotId: tea.String("s-123456")},
+								{SnapshotId: tea.String("s-789012")},
+							},
+						},
+					},
+				}
+				m.On("DescribeSnapshots", mock.Anything).Return(response, nil)
+			},
+			expectedError: "expected 1 snapshot from DescribeSnapshots",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client := new(mockECSClient)
+			defer client.AssertExpectations(t)
+
+			test.mockSetup(client)
+
+			b := &VolumeSnapshotter{
+				log:    newTestLogger(),
+				client: client,
+			}
+
+			snapshot, err := b.describeSnapshot(test.snapshotID)
+
+			if test.expectedError != "" {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), test.expectedError)
+				assert.Nil(t, snapshot)
+				return
+			}
+
+			assert.NoError(t, err)
+			assert.NotNil(t, snapshot)
+			assert.Equal(t, "s-123456", tea.StringValue(snapshot.SnapshotId))
+		})
+	}
+}
+
+func TestDescribeVolume(t *testing.T) {
+	tests := []struct {
+		name          string
+		volumeID      string
+		volumeAZ      string
+		mockSetup     func(*mockECSClient)
+		expectedError string
+	}{
+		{
+			name:     "success - describe volume with zone",
+			volumeID: "d-123456",
+			volumeAZ: "cn-hangzhou-h",
+			mockSetup: func(m *mockECSClient) {
+				response := &ecs20140526.DescribeDisksResponse{
+					Body: &ecs20140526.DescribeDisksResponseBody{
+						Disks: &ecs20140526.DescribeDisksResponseBodyDisks{
+							Disk: []*ecs20140526.DescribeDisksResponseBodyDisksDisk{
+								{
+									DiskId:   tea.String("d-123456"),
+									Category: tea.String("cloud_ssd"),
+								},
+							},
+						},
+					},
+				}
+				m.On("DescribeDisks", mock.Anything).Return(response, nil)
+			},
+		},
+		{
+			name:     "success - describe volume without zone",
+			volumeID: "d-123456",
+			volumeAZ: "",
+			mockSetup: func(m *mockECSClient) {
+				response := &ecs20140526.DescribeDisksResponse{
+					Body: &ecs20140526.DescribeDisksResponseBody{
+						Disks: &ecs20140526.DescribeDisksResponseBodyDisks{
+							Disk: []*ecs20140526.DescribeDisksResponseBodyDisksDisk{
+								{
+									DiskId:   tea.String("d-123456"),
+									Category: tea.String("cloud_ssd"),
+								},
+							},
+						},
+					},
+				}
+				m.On("DescribeDisks", mock.Anything).Return(response, nil)
+			},
+		},
+		{
+			name:     "error - describe disk fails",
+			volumeID: "d-123456",
+			volumeAZ: "cn-hangzhou-h",
+			mockSetup: func(m *mockECSClient) {
+				m.On("DescribeDisks", mock.Anything).Return(nil, errors.New("describe failed"))
+			},
+			expectedError: "failed to describe disk d-123456",
+		},
+		{
+			name:     "error - invalid response (nil body)",
+			volumeID: "d-123456",
+			volumeAZ: "cn-hangzhou-h",
+			mockSetup: func(m *mockECSClient) {
+				response := &ecs20140526.DescribeDisksResponse{
+					Body: nil,
+				}
+				m.On("DescribeDisks", mock.Anything).Return(response, nil)
+			},
+			expectedError: "invalid response from DescribeDisks",
+		},
+		{
+			name:     "error - wrong number of disks",
+			volumeID: "d-123456",
+			volumeAZ: "cn-hangzhou-h",
+			mockSetup: func(m *mockECSClient) {
+				response := &ecs20140526.DescribeDisksResponse{
+					Body: &ecs20140526.DescribeDisksResponseBody{
+						Disks: &ecs20140526.DescribeDisksResponseBodyDisks{
+							Disk: []*ecs20140526.DescribeDisksResponseBodyDisksDisk{
+								{DiskId: tea.String("d-123456")},
+								{DiskId: tea.String("d-789012")},
+							},
+						},
+					},
+				}
+				m.On("DescribeDisks", mock.Anything).Return(response, nil)
+			},
+			expectedError: "expected 1 disk from DescribeDisks",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client := new(mockECSClient)
+			defer client.AssertExpectations(t)
+
+			test.mockSetup(client)
+
+			b := &VolumeSnapshotter{
+				log:    newTestLogger(),
+				client: client,
+			}
+
+			disk, err := b.describeVolume(test.volumeID, test.volumeAZ)
+
+			if test.expectedError != "" {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), test.expectedError)
+				assert.Nil(t, disk)
+				return
+			}
+
+			assert.NoError(t, err)
+			assert.NotNil(t, disk)
+			assert.Equal(t, "d-123456", tea.StringValue(disk.DiskId))
 		})
 	}
 }

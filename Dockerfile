@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-FROM --platform=$BUILDPLATFORM registry-cn-hangzhou.ack.aliyuncs.com/dev/golang:1.24.5 as builder
+FROM --platform=$BUILDPLATFORM golang:1.24.5 as builder
 ARG TARGETPLATFORM
 ARG BUILDPLATFORM
 ARG GOPROXY=https://proxy.golang.org
@@ -46,7 +46,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     -o /workspace/${BIN} \
     ./${BIN}
 
-FROM --platform=$TARGETPLATFORM registry-cn-hangzhou.ack.aliyuncs.com/dev/alpine:3.22-update
+FROM --platform=$TARGETPLATFORM alpine:3.22
 
 ARG BIN=velero-plugin-alibabacloud
 
