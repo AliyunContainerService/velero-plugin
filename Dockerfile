@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-FROM --platform=$BUILDPLATFORM golang:1.24.5 as builder
+FROM --platform=$BUILDPLATFORM golang:1.25.5 as builder
 ARG TARGETPLATFORM
 ARG BUILDPLATFORM
 ARG GOPROXY=https://proxy.golang.org
@@ -22,7 +22,6 @@ ARG BIN=velero-plugin-alibabacloud
 ARG VERSION=main
 ARG GIT_SHA
 ARG GIT_TREE_STATE
-ARG REGISTRY=velero
 
 WORKDIR /workspace
 

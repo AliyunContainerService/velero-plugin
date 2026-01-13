@@ -1,6 +1,6 @@
 module github.com/AliyunContainerService/velero-plugin
 
-go 1.24.5
+go 1.25.5
 
 require (
 	github.com/AliyunContainerService/ack-ram-tool/pkg/ecsmetadata v0.0.10

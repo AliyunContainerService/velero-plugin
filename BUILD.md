@@ -80,29 +80,29 @@ _output/bin/<GOOS>/<GOARCH>/velero-plugin-alibabacloud
 
 ```bash
 # 构建默认架构（linux-amd64）的镜像
-make container
+REGISTRY=myregistry.com make container
 
 # 构建指定架构的镜像
-ARCH=linux-arm64 make container
+REGISTRY=myregistry.com ARCH=linux-arm64 make container
 
 # 构建多架构镜像（需要 Docker buildx）
-ARCH=linux-amd64,linux-arm64 make container
+REGISTRY=myregistry.com ARCH=linux-amd64,linux-arm64 make container
 
-# 指定版本和镜像仓库
-VERSION=v1.0.0 REGISTRY=myregistry.com make container
+# 指定镜像版本
+REGISTRY=myregistry.com VERSION=v1.0.0 make container
 
-# 同时打 latest 标签
-TAG_LATEST=true VERSION=v1.0.0 make container
+# 打 latest 标签
+REGISTRY=myregistry.com VERSION=v1.0.0 TAG_LATEST=true make container
 ```
 
 #### 使用 Podman 构建（单架构）
 
 ```bash
 # 使用 Podman 构建（仅支持单架构）
-CONTAINER_RUNTIME=podman make container
+CONTAINER_RUNTIME=podman REGISTRY=myregistry.com make container
 
 # 指定架构
-CONTAINER_RUNTIME=podman ARCH=linux-arm64 make container
+CONTAINER_RUNTIME=podman REGISTRY=myregistry.com ARCH=linux-arm64 make container
 ```
 
 #### 构建输出
@@ -118,17 +118,7 @@ CONTAINER_RUNTIME=podman ARCH=linux-arm64 make container
 
 ## 架构支持
 
-### 支持的架构
-
-| 架构 | GOOS | GOARCH | 说明 |
-|------|------|--------|------|
-| Linux AMD64 | linux | amd64 | 默认架构，适用于大多数服务器 |
-| Linux ARM64 | linux | arm64 | ARM 服务器（如 AWS Graviton） |
-| Linux ARM | linux | arm | ARM 32位设备 |
-| Darwin AMD64 | darwin | amd64 | Intel Mac |
-| Darwin ARM64 | darwin | arm64 | Apple Silicon Mac |
-| Windows AMD64 | windows | amd64 | Windows 服务器 |
-| Linux PPC64LE | linux | ppc64le | PowerPC 服务器 |
+> **注意**：我们提供的已构建镜像支持 `linux/amd64` 和 `linux/arm64` 双架构。
 
 ### 架构兼容性说明
 
@@ -157,7 +147,7 @@ ARCH=linux-amd64,linux-arm64 make container
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `BIN` | `velero-plugin-alibabacloud` | 二进制文件名 |
-| `ARCH` | `linux-amd64` | 目标架构（格式：GOOS-GOARCH） |
+| `ARCH` | `linux-amd64` | 目标架构（格式：GOOS-GOARCH），例如：`linux-amd64`、`linux-arm64` |
 | `VERSION` | `main` | 镜像版本标签 |
 | `REGISTRY` | `velero` | 镜像仓库前缀 |
 | `TAG_LATEST` | `false` | 是否同时打 latest 标签 |
@@ -168,15 +158,7 @@ ARCH=linux-amd64,linux-arm64 make container
 ### 使用示例
 
 ```bash
-# 自定义所有参数
-BIN=my-plugin \
-ARCH=linux-arm64 \
-VERSION=v2.0.0 \
-REGISTRY=myregistry.com \
-TAG_LATEST=true \
-make container
-
-# 使用中国 Go 代理加速
+# 使用 Go 代理加速构建
 GOPROXY=https://goproxy.cn,direct make container
 ```
 
@@ -185,10 +167,7 @@ GOPROXY=https://goproxy.cn,direct make container
 ### 运行测试
 
 ```bash
-# 运行所有单元测试
-make test
-
-# 运行测试并生成覆盖率报告
+# 运行所有单元测试并生成覆盖率报告
 make test
 # 查看覆盖率报告
 go tool cover -html=coverage.out
@@ -212,75 +191,6 @@ make ci
 ```bash
 # 清理所有构建产物
 make clean
-```
-
-## 常见问题
-
-### 1. Docker Buildx 未启用
-
-**错误信息**:
-```
-buildx not enabled, refusing to run this recipe
-```
-
-**解决方法**:
-```bash
-# 创建并启用 buildx builder
-docker buildx create --name multiarch --use
-docker buildx inspect --bootstrap
-```
-
-### 2. Podman 构建失败
-
-**问题**: Podman 可能不支持某些 Docker 特性
-
-**解决方法**:
-- 确保使用 Podman 4.0+ 版本
-- 如果遇到问题，可以尝试使用 Docker
-- Podman 仅支持单架构构建，确保 `ARCH` 参数正确
-
-### 3. 跨平台构建失败
-
-**问题**: 在非 Linux 平台上构建 Linux 镜像时失败
-
-**解决方法**:
-- 使用 Docker buildx 进行跨平台构建（推荐）
-- 或者使用 `ARCH=linux-amd64 make container` 明确指定目标架构
-- 确保 Dockerfile 中正确使用了 `TARGETPLATFORM` 和 `BUILDPLATFORM`
-
-### 4. Go 模块下载慢
-
-**问题**: 在中国大陆下载 Go 模块很慢
-
-**解决方法**:
-```bash
-# 使用中国 Go 代理
-GOPROXY=https://goproxy.cn,direct make container
-
-# 或者在 Dockerfile 中设置
-# 编辑 Dockerfile，修改 GOPROXY 默认值
-```
-
-### 5. 构建路径错误
-
-**问题**: 构建时提示找不到包或文件
-
-**解决方法**:
-- 确保在项目根目录执行 make 命令
-- 检查 `BIN` 变量是否与目录名匹配（默认：`velero-plugin-alibabacloud`）
-- 验证 `PKG` 变量是否正确（默认：`github.com/AliyunContainerService/velero-plugin`）
-
-### 6. 权限问题
-
-**问题**: 构建镜像时提示权限不足
-
-**解决方法**:
-```bash
-# Docker: 确保用户在 docker 组中
-sudo usermod -aG docker $USER
-# 重新登录后生效
-
-# Podman: 通常不需要特殊权限
 ```
 
 ## 构建流程说明
