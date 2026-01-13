@@ -115,7 +115,7 @@ velero install \
 #### Backup Storage Location 配置参数
 
 | 参数 | 类型 | 说明 | 示例 |
-|------|------|------|------|
+|:-----|:-----|:-----|:-----|
 | `region` | 必需 | OSS bucket 所在区域 | `cn-hangzhou` |
 | `network` | 可选 | 网络类型。可选值：`internal`（内网）、`accelerate`（加速域名）。默认为公网 | `internal` |
 | `endpoint` | 可选 | 自定义 OSS 端点 | `https://oss-custom.example.com` |
@@ -123,13 +123,13 @@ velero install \
 #### Volume Snapshot Location 配置参数
 
 | 参数 | 类型 | 说明 | 示例 |
-|------|------|------|------|
+|:-----|:-----|:-----|:-----|
 | `region` | 必需 | ECS 快照所在区域 | `cn-hangzhou` |
 
 #### 其他常见可选参数
 
 | 参数 | 类型 | 说明 | 示例 |
-|------|------|------|------|
+|:-----|:-----|:-----|:-----|
 | `--prefix` | 可选 | 用于在同一 bucket 中存储多个集群的备份，指定 OSS bucket 中的路径前缀 | `--prefix cluster1/backups` |
 | `--use-node-agent` | 可选 | 启用 node agent 支持，用于文件系统级别的备份 | `--use-node-agent` |
 

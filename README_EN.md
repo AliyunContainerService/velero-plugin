@@ -113,7 +113,7 @@ velero install \
 #### Backup Storage Location Configuration Parameters
 
 | Parameter | Type | Description | Example |
-|-----------|------|-------------|---------|
+|:-----|:-----|:-----|:-----|
 | `region` | Required | The region where the OSS bucket is located | `cn-hangzhou` |
 | `network` | Optional | Network type. Options: `internal` (internal network), `accelerate` (accelerate domain). Default is public network | `internal` |
 | `endpoint` | Optional | Custom OSS endpoint | `https://oss-custom.example.com` |
@@ -121,13 +121,13 @@ velero install \
 #### Volume Snapshot Location Configuration Parameters
 
 | Parameter | Type | Description | Example |
-|-----------|------|-------------|---------|
+|:-----|:-----|:-----|:-----|
 | `region` | Required | The region where ECS snapshots are located | `cn-hangzhou` |
 
 #### Other common Optional Parameters
 
 | Parameter | Type | Description | Example |
-|-----------|------|-------------|---------|
+|:-----|:-----|:-----|:-----|
 | `--prefix` | Optional | Used to store backups from multiple clusters in the same bucket, specifies the path prefix in the OSS bucket | `--prefix cluster1/backups` |
 | `--use-node-agent` | Optional | Enable node agent support for file system level backups | `--use-node-agent` |
 

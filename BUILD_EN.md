@@ -80,29 +80,29 @@ Container image build generates Docker/Podman images that can be deployed to Kub
 
 ```bash
 # Build image for default architecture (linux-amd64)
-make container
+REGISTRY=myregistry.com make container
 
 # Build image for specific architecture
-ARCH=linux-arm64 make container
+REGISTRY=myregistry.com ARCH=linux-arm64 make container
 
 # Build multi-architecture image (requires Docker buildx)
-ARCH=linux-amd64,linux-arm64 make container
+REGISTRY=myregistry.com ARCH=linux-amd64,linux-arm64 make container
 
-# Specify version and image registry
-VERSION=v1.0.0 REGISTRY=myregistry.com make container
+# Specify imageversion
+REGISTRY=myregistry.com VERSION=v1.0.0 make container
 
-# Also tag as latest
-TAG_LATEST=true VERSION=v1.0.0 make container
+# Tag as latest
+REGISTRY=myregistry.com VERSION=v1.0.0 TAG_LATEST=true make container
 ```
 
 #### Build with Podman (Single architecture)
 
 ```bash
 # Build with Podman (single architecture only)
-CONTAINER_RUNTIME=podman make container
+CONTAINER_RUNTIME=podman REGISTRY=myregistry.com make container
 
 # Specify architecture
-CONTAINER_RUNTIME=podman ARCH=linux-arm64 make container
+CONTAINER_RUNTIME=podman REGISTRY=myregistry.com ARCH=linux-arm64 make container
 ```
 
 #### Build Output
@@ -118,17 +118,7 @@ Examples:
 
 ## Architecture Support
 
-### Supported Architectures
-
-| Architecture | GOOS | GOARCH | Description |
-|--------------|------|--------|-------------|
-| Linux AMD64 | linux | amd64 | Default architecture, suitable for most servers |
-| Linux ARM64 | linux | arm64 | ARM servers (e.g., AWS Graviton) |
-| Linux ARM | linux | arm | ARM 32-bit devices |
-| Darwin AMD64 | darwin | amd64 | Intel Mac |
-| Darwin ARM64 | darwin | arm64 | Apple Silicon Mac |
-| Windows AMD64 | windows | amd64 | Windows servers |
-| Linux PPC64LE | linux | ppc64le | PowerPC servers |
+> **Note**: The pre-built images we provide support both `linux/amd64` and `linux/arm64` architectures.
 
 ### Architecture Compatibility Notes
 
@@ -157,7 +147,7 @@ ARCH=linux-amd64,linux-arm64 make container
 | Variable | Default Value | Description |
 |----------|---------------|-------------|
 | `BIN` | `velero-plugin-alibabacloud` | Binary file name |
-| `ARCH` | `linux-amd64` | Target architecture (format: GOOS-GOARCH) |
+| `ARCH` | `linux-amd64` | Target architecture (format: GOOS-GOARCH), e.g., `linux-amd64`, `linux-arm64` |
 | `VERSION` | `main` | Image version tag |
 | `REGISTRY` | `velero` | Image registry prefix |
 | `TAG_LATEST` | `false` | Whether to also tag as latest |
@@ -168,15 +158,7 @@ ARCH=linux-amd64,linux-arm64 make container
 ### Usage Examples
 
 ```bash
-# Customize all parameters
-BIN=my-plugin \
-ARCH=linux-arm64 \
-VERSION=v2.0.0 \
-REGISTRY=myregistry.com \
-TAG_LATEST=true \
-make container
-
-# Use Chinese Go proxy for faster downloads
+# Use Go proxy for faster downloads
 GOPROXY=https://goproxy.cn,direct make container
 ```
 
@@ -185,10 +167,7 @@ GOPROXY=https://goproxy.cn,direct make container
 ### Run Tests
 
 ```bash
-# Run all unit tests
-make test
-
-# Run tests and generate coverage report
+# Run all unit tests and generate coverage report
 make test
 # View coverage report
 go tool cover -html=coverage.out
@@ -212,75 +191,6 @@ make ci
 ```bash
 # Clean all build artifacts
 make clean
-```
-
-## Common Issues
-
-### 1. Docker Buildx Not Enabled
-
-**Error Message**:
-```
-buildx not enabled, refusing to run this recipe
-```
-
-**Solution**:
-```bash
-# Create and enable buildx builder
-docker buildx create --name multiarch --use
-docker buildx inspect --bootstrap
-```
-
-### 2. Podman Build Fails
-
-**Issue**: Podman may not support some Docker features
-
-**Solution**:
-- Ensure you're using Podman 4.0+
-- If issues persist, try using Docker instead
-- Podman only supports single architecture builds, ensure the `ARCH` parameter is correct
-
-### 3. Cross-Platform Build Fails
-
-**Issue**: Building Linux images on non-Linux platforms fails
-
-**Solution**:
-- Use Docker buildx for cross-platform builds (recommended)
-- Or explicitly specify target architecture with `ARCH=linux-amd64 make container`
-- Ensure Dockerfile correctly uses `TARGETPLATFORM` and `BUILDPLATFORM`
-
-### 4. Slow Go Module Downloads
-
-**Issue**: Downloading Go modules is slow in mainland China
-
-**Solution**:
-```bash
-# Use Chinese Go proxy
-GOPROXY=https://goproxy.cn,direct make container
-
-# Or set in Dockerfile
-# Edit Dockerfile and modify GOPROXY default value
-```
-
-### 5. Build Path Error
-
-**Issue**: Build fails with "package or file not found" error
-
-**Solution**:
-- Ensure you're running make command from the project root directory
-- Check that `BIN` variable matches the directory name (default: `velero-plugin-alibabacloud`)
-- Verify `PKG` variable is correct (default: `github.com/AliyunContainerService/velero-plugin`)
-
-### 6. Permission Issues
-
-**Issue**: Build fails with permission denied errors
-
-**Solution**:
-```bash
-# Docker: Ensure user is in docker group
-sudo usermod -aG docker $USER
-# Log out and log back in for changes to take effect
-
-# Podman: Usually doesn't require special permissions
 ```
 
 ## Build Process Overview
