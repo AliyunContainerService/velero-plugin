@@ -1,6 +1,10 @@
 # Velero Plugin for Alibaba Cloud - Build Guide
 
-> [中文版](BUILD.md) | English Version
+<div align="right">
+
+[![English](https://img.shields.io/badge/English-0066CC?style=for-the-badge&logo=github&logoColor=white)](BUILD_EN.md) [![中文](https://img.shields.io/badge/中文-DC143C?style=for-the-badge&logo=github&logoColor=white)](BUILD.md)
+
+</div>
 
 This document provides detailed instructions on how to build Velero Plugin for Alibaba Cloud from source.
 

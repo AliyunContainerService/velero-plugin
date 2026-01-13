@@ -1,65 +1,48 @@
-## Overview
+# Velero Plugin for Alibaba Cloud
+
+<div align="right">
+
+[![English](https://img.shields.io/badge/English-0066CC?style=for-the-badge&logo=github&logoColor=white)](README_EN.md) [![中文](https://img.shields.io/badge/中文-DC143C?style=for-the-badge&logo=github&logoColor=white)](README.md)
+
+</div>
 
 [![GoReportCard Widget]][GoReportCardResult]
 
-Velero is a utility to back up and restore your Kubernetes resource and persistent volumes.
+Velero Plugin for Alibaba Cloud 是用于在阿里云上使用 Velero 进行 Kubernetes 资源备份和恢复的插件。
 
-To do backup/restore on Alibaba Cloud through Velero utility, you need to install and configure velero and velero-plugin for alibabacloud.
+**当前版本**: v2.0.0（适用于 Velero v1.17.x）
 
-## Run velero on AlibabaCloud
+## 概述
 
-To set up Velero on AlibabaCloud, you:
+Velero 是一个用于备份和恢复 Kubernetes 资源和持久卷的工具。
 
-* Download an official release of Velero
-* Create your OSS bucket
-* Create an RAM user for Velero
-* Install the velero and velero-plugin for alibabacloud
+要在阿里云上通过 Velero 进行备份/恢复，您需要安装和配置 Velero 以及 velero-plugin-for-alibabacloud。
 
-## Download Velero
+## 在阿里云上运行 Velero
 
-1. Download the [latest official release's](https://github.com/heptio/velero/releases) tarball for your client platform.
+要在阿里云上设置 Velero，您需要：
 
-    _We strongly recommend that you use an [official release](https://github.com/heptio/velero/releases) of
-Velero. The tarballs for each release contain the `velero` command-line client. The code in the master branch
-of the Velero repository is under active development and is not guaranteed to be stable!_
+* 创建 OSS bucket
+* 创建 RAM 用户
+* 安装 Velero 和 velero-plugin-for-alibabacloud
 
-1. Extract the tarball:
+## 创建 OSS bucket
 
-    ```bash
-    tar -xvf <RELEASE-TARBALL-NAME>.tar.gz -C /dir/to/extract/to 
-    ```
-    
-    We'll refer to the directory you extracted to as the "Velero directory" in subsequent steps.
+Velero 需要一个对象存储 bucket 来存储备份，建议为每个 Kubernetes 集群创建独立的 bucket。
 
-2. Move the `velero` binary from the Velero directory to somewhere in your PATH.
+请参考 [创建存储空间文档](https://help.aliyun.com/zh/oss/user-guide/create-a-bucket-4) 创建 OSS bucket。
 
-## Create OSS bucket
+## 创建 RAM 用户
 
-Velero requires an object storage bucket to store backups in, preferrably unique to a single Kubernetes cluster. Create an OSS bucket, replacing placeholders appropriately:
+1. 创建 RAM 用户：
 
-```bash
-BUCKET=<YOUR_BUCKET>
-REGION=<YOUR_REGION>
-ossutil mb oss://$BUCKET \
-        --storage-class Standard \
-        --acl=private
-```
+   请参考 [创建 RAM 用户文档](https://help.aliyun.com/zh/ram/user-guide/create-a-ram-user)。
 
-## Create RAM user
+2. 创建自定义策略：
 
-For more information, see [the AlibabaCloud documentation on RAM users guides][14].
+   请参考 [创建自定义策略文档](https://help.aliyun.com/zh/ram/create-a-custom-policy) 创建策略，策略内容如下：
 
-1. Create the RAM user:
-
-    Follow [the AlibabaCloud documentation on RAM users][22].
-    
-    > If you'll be using Velero to backup multiple clusters with multiple OSS buckets, it may be desirable to create a unique username per cluster rather than the default `velero`.
-
-2. Attach policies to give `velero` the necessary permissions:
-
-    > Note that you'd better release the velero's delete permissions once you have completed your backup or restore task for safety reasons.
-
-    ```bash
+    ```json
     {
         "Version": "1",
         "Statement": [
@@ -86,121 +69,75 @@ For more information, see [the AlibabaCloud documentation on RAM users guides][1
         ]
     }
     ```
-3. Create an access key for the user:
 
-    Follow [the AlibabaCloud documentation on create AK][24].
+3. 为 RAM 用户授权：
 
-4. Create a Velero-specific credentials file (`credentials-velero`) in your `install` directory:
+   请参考 [为 RAM 用户授权文档](https://help.aliyun.com/zh/ram/user-guide/grant-permissions-to-the-ram-user) 将上述策略授权给 RAM 用户。
+
+4. 创建 AccessKey：
+
+   请参考 [创建 AccessKey 文档](https://help.aliyun.com/zh/ram/user-guide/create-an-accesskey-pair) 为 RAM 用户创建 AccessKey。
+
+5. 创建 Velero 凭证文件：
+
+   在您的 `install` 目录下创建 Velero 凭证文件（`credentials-velero`）：
 
     ```
     ALIBABA_CLOUD_ACCESS_KEY_ID=<ALIBABA_CLOUD_ACCESS_KEY_ID>
     ALIBABA_CLOUD_ACCESS_KEY_SECRET=<ALIBABA_CLOUD_ACCESS_KEY_SECRET>
     ```
 
-    where the access key id and secret are the values get from the step 3.
-     
-## Install velero and velero-plugin for alibabacloud
+    其中 AccessKey ID 和 Secret 来自步骤 4。
 
-1. Set some environment variables
+## 安装 Velero 和 velero-plugin-for-alibabacloud
 
-	```bash
-	BUCKET=<YOUR_BUCKET>
-	REGION=<YOUR_REGION>
-	```
-	
-2. Create and run velero and velero-plugin for alibabacloud
+### 下载 Velero
 
-	Run the following command to create and run velero and velero-plugin for alibabacloud
-	
-	```
-	velero install \
-      --provider alibabacloud \
-      --image registry.$REGION.aliyuncs.com/acs/velero:1.4.2-2b9dce65-aliyun \
-      --bucket $BUCKET \
-      --secret-file ./credentials-velero \
-      --use-volume-snapshots=false \
-      --backup-location-config region=$REGION \
-      --use-restic \
-      --plugins registry.$REGION.aliyuncs.com/acs/velero-plugin-alibabacloud:v1.0.0-2d33b89 \
-      --wait
-	```
+下载 [Velero 官方发布版本](https://github.com/vmware-tanzu/velero/releases) 中适合您操作系统的最新版本。
 
-    If you want use an internal oss endpoint, you can add params:
-    
-    `--backup-location-config region=$REGION,network=internal`
-    
-    If you want use a oss prefix to store backup files, you can add params:
-    
-    `--prefix <your oss bucket prefix>`
-	
-3. Create ConfigMap for velero restic helper image in your restore cluster
+### 安装 Velero
 
-  Run the following command to create a velero restic helper configmap in your restore cluster(optional for backup cluster).
-  
-  `kubectl -n velero apply -f install/02-configmap.yaml`
+运行以下命令在 Kubernetes 集群中安装 Velero 和 velero-plugin-for-alibabacloud。此命令将安装 Velero 的服务端组件，包括 CRDs、Deployment、ServiceAccount 等资源。
 
-4. Cleanup velero installation
+```bash
+velero install \
+    --provider alibabacloud \
+    --plugins velero/velero-plugin-for-alibabacloud:v2.0.0 \
+    --bucket <YOUR_BUCKET> \
+    --secret-file ./credentials-velero \
+    --backup-location-config region=<REGION>,network=<NETWORK> \
+    --snapshot-location-config region=<REGION> \
+    --wait
+```
 
-	Run the following command to cleanup the velero installation
-	
-	```
-	kubectl delete namespace/velero clusterrolebinding/velero
-	kubectl delete crds -l component=velero
-	```
-	
-## Installing the nginx example (optional)
+### 配置参数说明
 
-1. nginx example without persistent volumes
+#### Backup Storage Location 配置参数
 
-	Run the following command to create a nginx example without persistent volumes:
-	
-	`kubectl apply -f examples/base.yaml`
-	
-	Create a backup:
-	
-	`velero backup create nginx-backup --include-namespaces nginx-example --wait`
-	
-	Destroy the nginx example:
-	
-	`kubectl delete namespaces nginx-example`
-	
-	Create a restore from nginx-backup:
-	
-	`velero  restore create --from-backup nginx-backup --wait`
+| 参数 | 类型 | 说明 | 示例 |
+|------|------|------|------|
+| `region` | 必需 | OSS bucket 所在区域 | `cn-hangzhou` |
+| `network` | 可选 | 网络类型。可选值：`internal`（内网）、`accelerate`（加速域名）。默认为公网 | `internal` |
+| `endpoint` | 可选 | 自定义 OSS 端点 | `https://oss-custom.example.com` |
 
-2. nginx example with persistent volumes
+#### Volume Snapshot Location 配置参数
 
-	Run the following command to create a nginx example with persistent volumes:
+| 参数 | 类型 | 说明 | 示例 |
+|------|------|------|------|
+| `region` | 必需 | ECS 快照所在区域 | `cn-hangzhou` |
 
-	```
-	kubectl apply -f examples/with-pv.yaml
-	```
-	
-	Add annotations to pod volume, restic will backup the volume data during backup process.
-	
-	```
-    kubectl -n nginx-example annotate pod/nginx-deployment-7477779c4f-dxspm backup.velero.io/backup-volumes=nginx-logs
-    ```
- 
-	Create a backup:
-	
-	`velero backup create nginx-backup-volume --include-namespaces nginx-example --wait`
-	
-	Destroy the nginx example:
-	
-	```
-	kubectl delete namespaces nginx-example
-	```
-	
-	Create a restore from nginx-backup-volume:
-	
-	`velero  restore create --from-backup nginx-backup-volume --wait`
-	
+#### 其他常见可选参数
 
-[14]: https://www.alibabacloud.com/help/doc-detail/28645.htm
-[22]: https://www.alibabacloud.com/help/doc-detail/93720.htm
-[23]: https://www.alibabacloud.com/help/doc-detail/50452.htm
-[24]: https://www.alibabacloud.com/help/doc-detail/53045.htm
+| 参数 | 类型 | 说明 | 示例 |
+|------|------|------|------|
+| `--prefix` | 可选 | 用于在同一 bucket 中存储多个集群的备份，指定 OSS bucket 中的路径前缀 | `--prefix cluster1/backups` |
+| `--use-node-agent` | 可选 | 启用 node agent 支持，用于文件系统级别的备份 | `--use-node-agent` |
+
+（可选）根据您的需求进一步自定义 Velero 安装。更多参数请参考 [Velero 官方文档](https://velero.io/docs/)。
+
+## 卸载 Velero
+
+要卸载 Velero，请参考 [Velero 官方卸载文档](https://velero.io/docs/uninstall/)。
 
 [GoReportCard Widget]: https://goreportcard.com/badge/github.com/AliyunContainerService/velero-plugin
 [GoReportCardResult]: https://goreportcard.com/report/github.com/AliyunContainerService/velero-plugin
