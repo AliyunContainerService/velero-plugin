@@ -16,8 +16,6 @@
  *
  */
 
-//go:generate ./regenerate.sh
-
 // Package health provides a service that exposes server's health and it must be
 // imported to enable support for client-side health checks.
 package health
@@ -27,14 +25,21 @@ import (
 	"sync"
 
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/grpclog"
 	healthgrpc "google.golang.org/grpc/health/grpc_health_v1"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
 )
 
+const (
+	// maxAllowedServices defines the maximum number of resources a List
+	// operation can return. An error is returned if the number of services
+	// exceeds this limit.
+	maxAllowedServices = 100
+)
+
 // Server implements `service Health`.
 type Server struct {
+	healthgrpc.UnimplementedHealthServer
 	mu sync.RWMutex
 	// If shutdown is true, it's expected all serving status is NOT_SERVING, and
 	// will stay in NOT_SERVING.
@@ -53,7 +58,7 @@ func NewServer() *Server {
 }
 
 // Check implements `service Health`.
-func (s *Server) Check(ctx context.Context, in *healthpb.HealthCheckRequest) (*healthpb.HealthCheckResponse, error) {
+func (s *Server) Check(_ context.Context, in *healthpb.HealthCheckRequest) (*healthpb.HealthCheckResponse, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if servingStatus, ok := s.statusMap[in.Service]; ok {
@@ -62,6 +67,23 @@ func (s *Server) Check(ctx context.Context, in *healthpb.HealthCheckRequest) (*h
 		}, nil
 	}
 	return nil, status.Error(codes.NotFound, "unknown service")
+}
+
+// List implements `service Health`.
+func (s *Server) List(_ context.Context, _ *healthpb.HealthListRequest) (*healthpb.HealthListResponse, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if len(s.statusMap) > maxAllowedServices {
+		return nil, status.Errorf(codes.ResourceExhausted, "server health list exceeds maximum capacity: %d", maxAllowedServices)
+	}
+
+	statusMap := make(map[string]*healthpb.HealthCheckResponse, len(s.statusMap))
+	for k, v := range s.statusMap {
+		statusMap[k] = &healthpb.HealthCheckResponse{Status: v}
+	}
+
+	return &healthpb.HealthListResponse{Statuses: statusMap}, nil
 }
 
 // Watch implements `service Health`.
@@ -115,7 +137,7 @@ func (s *Server) SetServingStatus(service string, servingStatus healthpb.HealthC
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.shutdown {
-		grpclog.Infof("health: status changing for %s to %v is ignored because health service is shutdown", service, servingStatus)
+		logger.Infof("health: status changing for %s to %v is ignored because health service is shutdown", service, servingStatus)
 		return
 	}
 

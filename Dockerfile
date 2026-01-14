@@ -12,8 +12,47 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM debian:stretch-slim
-RUN mkdir /plugins
-ADD _output/velero-* /plugins/
-USER nobody:nobody
-ENTRYPOINT ["/bin/bash", "-c", "cp /plugins/* /target/."]
+
+FROM --platform=$BUILDPLATFORM golang:1.25.5 as builder
+ARG TARGETPLATFORM
+ARG BUILDPLATFORM
+ARG GOPROXY=https://proxy.golang.org
+ARG PKG=github.com/AliyunContainerService/velero-plugin
+ARG BIN=velero-plugin-alibabacloud
+ARG VERSION=main
+ARG GIT_SHA
+ARG GIT_TREE_STATE
+
+WORKDIR /workspace
+
+# Copy go mod files first for better caching
+COPY go.mod go.sum ./
+
+# Download dependencies (using BuildKit cache mount if available)
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
+
+# Copy source code
+COPY . .
+
+# Build the binary (using BuildKit cache mount for Go build cache)
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    TARGETARCH=$(echo $TARGETPLATFORM | cut -f2 -d '/') && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
+    GOPROXY=${GOPROXY} \
+    go build \
+    -installsuffix "static" \
+    -o /workspace/${BIN} \
+    ./${BIN}
+
+FROM --platform=$TARGETPLATFORM alpine:3.22
+
+ARG BIN=velero-plugin-alibabacloud
+
+RUN mkdir -p /plugins
+COPY --from=builder /workspace/${BIN} /plugins/${BIN}
+
+RUN addgroup -S nonroot && adduser -u 65530 -S nonroot -G nonroot
+USER 65530
+
+ENTRYPOINT ["/bin/sh", "-c", "cp /plugins/* /target/."]

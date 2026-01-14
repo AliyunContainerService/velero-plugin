@@ -1,5 +1,5 @@
 /*
-Copyright 2018, 2019 the Velero contributors.
+Copyright 2021 the Velero contributors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/pkg/errors"
@@ -28,11 +29,13 @@ import (
 const (
 	ConfigKeyNamespace = "namespace"
 	ConfigKeyFeatures  = "features"
+	ConfigKeyCACert    = "cacert"
+	ConfigKeyColorized = "colorized"
 )
 
-// VeleroConfig is a map of strings to interface{} for deserializing Velero client config options.
+// VeleroConfig is a map of strings to any for deserializing Velero client config options.
 // The alias is a way to attach type-asserting convenience methods.
-type VeleroConfig map[string]interface{}
+type VeleroConfig map[string]any
 
 // LoadConfig loads the Velero client configuration file and returns it as a VeleroConfig. If the
 // file does not exist, an empty map is returned.
@@ -69,11 +72,11 @@ func SaveConfig(config VeleroConfig) error {
 
 	// Try to make the directory in case it doesn't exist
 	dir := filepath.Dir(fileName)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return errors.WithStack(err)
 	}
 
-	configFile, err := os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+	configFile, err := os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 	if err != nil {
 		return errors.WithStack(err)
 	}
@@ -108,6 +111,38 @@ func (c VeleroConfig) Features() []string {
 	}
 
 	return strings.Split(features, ",")
+}
+
+func (c VeleroConfig) Colorized() bool {
+	val, ok := c[ConfigKeyColorized]
+	if !ok {
+		return true
+	}
+
+	valString, ok := val.(string)
+	if !ok {
+		return true
+	}
+
+	colorized, err := strconv.ParseBool(valString)
+	if err != nil {
+		return true
+	}
+
+	return colorized
+}
+
+func (c VeleroConfig) CACertFile() string {
+	val, ok := c[ConfigKeyCACert]
+	if !ok {
+		return ""
+	}
+	caCertFile, ok := val.(string)
+	if !ok {
+		return ""
+	}
+
+	return caCertFile
 }
 
 func configFileName() string {

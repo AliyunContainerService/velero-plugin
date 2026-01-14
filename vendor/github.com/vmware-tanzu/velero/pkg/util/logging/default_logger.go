@@ -24,20 +24,54 @@ import (
 
 // DefaultHooks returns a slice of the default
 // logrus hooks to be used by a logger.
-func DefaultHooks() []logrus.Hook {
-	return []logrus.Hook{
+func DefaultHooks(merge bool) []logrus.Hook {
+	hooks := []logrus.Hook{
 		&LogLocationHook{},
 		&ErrorLocationHook{},
 	}
+
+	if merge {
+		hooks = append(hooks, &MergeHook{})
+	}
+
+	return hooks
 }
 
 // DefaultLogger returns a Logger with the default properties
 // and hooks. The desired output format is passed as a LogFormat Enum.
 func DefaultLogger(level logrus.Level, format Format) *logrus.Logger {
+	return createLogger(level, format, false)
+}
+
+// DefaultLogger returns a Logger with the default properties
+// and hooks, and also a hook to support log merge.
+// The desired output format is passed as a LogFormat Enum.
+func DefaultMergeLogger(level logrus.Level, format Format) *logrus.Logger {
+	return createLogger(level, format, true)
+}
+
+func createLogger(level logrus.Level, format Format, merge bool) *logrus.Logger {
 	logger := logrus.New()
 
 	if format == FormatJSON {
 		logger.Formatter = new(logrus.JSONFormatter)
+		// Error hooks inject nested fields under "error.*" with the error
+		// string message at "error".
+		//
+		// This structure is incompatible with recent Elasticsearch versions
+		// where dots in field names are automatically expanded to objects;
+		// field "error" cannot be both a string and an object at the same
+		// time.
+		//
+		// ELK being a popular choice for log ingestion and a common reason
+		// for enabling JSON logging in the first place, we avoid this mapping
+		// problem by nesting the error's message at "error.message".
+		//
+		// This also follows the Elastic Common Schema (ECS) recommendation.
+		// https://www.elastic.co/guide/en/ecs/current/ecs-error.html
+		logrus.ErrorKey = "error.message"
+	} else {
+		logrus.ErrorKey = "error"
 	}
 
 	// Make sure the output is set to stdout so log messages don't show up as errors in cloud log dashboards.
@@ -45,7 +79,7 @@ func DefaultLogger(level logrus.Level, format Format) *logrus.Logger {
 
 	logger.Level = level
 
-	for _, hook := range DefaultHooks() {
+	for _, hook := range DefaultHooks(merge) {
 		logger.Hooks.Add(hook)
 	}
 
