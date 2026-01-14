@@ -44,7 +44,7 @@ This option is suitable for scenarios where Velero runs on Alibaba Cloud ECS nod
 
 1. **Configure Worker RAM Role**:
 
-   * If you are using Alibaba Cloud ACK, the cluster nodes are already bound to a RAM role with empty permissions by default. To refine the Worker RAM role for different nodes, you can also refer to the [Use Custom Worker RAM Roles documentation](https://www.alibabacloud.com/help/en/ack/ack-managed-and-ack-dedicated/user-guide/use-custom-worker-ram-roles) to customize Worker RAM roles. You can skip this step.
+   * If you are using Alibaba Cloud ACK, the cluster nodes are already bound to a RAM role with empty permissions by default, so you can skip this step. To refine the Worker RAM role for different nodes, you can refer to the [Use Custom Worker RAM Roles documentation](https://www.alibabacloud.com/help/en/ack/ack-managed-and-ack-dedicated/user-guide/use-custom-worker-ram-roles) to customize Worker RAM roles.
    * Otherwise, you should create a RAM role and bind it to the ECS nodes where Velero runs. Refer to the [Attach an Instance RAM Role to an ECS Instance documentation](https://www.alibabacloud.com/help/en/ecs/user-guide/attach-an-instance-ram-role-to-an-ecs-instance).
 
 2. **Create a custom policy**:
@@ -165,8 +165,8 @@ Run the following command to install Velero and velero-plugin-for-alibabacloud i
 ```bash
 velero install \
     --provider alibabacloud \
-    --image velero/velero:v1.17.1
-    --plugins velero/velero-plugin-for-alibabacloud:v2.0.0 \
+    --image registry-cn-hangzhou.ack.aliyuncs.com/acs/velero:v1.17.1\
+    --plugins registry-cn-hangzhou.ack.aliyuncs.com/acs/velero-plugin-alibabacloud:v2.0.0-f857869 \
     --bucket <YOUR_BUCKET> \
     --secret-file ./credentials-velero \
     --backup-location-config region=<REGION>,network=<NETWORK> \
@@ -194,7 +194,7 @@ velero install \
 
 | Parameter | Type | Description | Example |
 |:-----|:-----|:-----|:-----|
-| `--prefix` | Optional | Used to store backups from multiple clusters in the same bucket, specifies the path prefix in the OSS bucket | `--prefix cluster1/backups` |
+| `--prefix` | Optional | Used to store backups from multiple clusters in the same bucket, specifies the path prefix in the OSS bucket | `cluster1` |
 
 (Optional) Customize the Velero installation further to meet your needs.
 

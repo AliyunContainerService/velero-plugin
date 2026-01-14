@@ -639,6 +639,7 @@ func TestCreateSnapshot(t *testing.T) {
 			b := &VolumeSnapshotter{
 				log:    newTestLogger(),
 				client: client,
+				region: "cn-hangzhou",
 			}
 
 			snapshotID, err := b.CreateSnapshot(test.volumeID, test.volumeAZ, test.tags)
@@ -666,6 +667,7 @@ func TestDeleteSnapshot(t *testing.T) {
 	b := &VolumeSnapshotter{
 		log:    newTestLogger(),
 		client: client,
+		region: "cn-hangzhou",
 	}
 
 	err := b.DeleteSnapshot("s-123456")
@@ -682,6 +684,7 @@ func TestDeleteSnapshot_NotFound(t *testing.T) {
 	b := &VolumeSnapshotter{
 		log:    newTestLogger(),
 		client: client,
+		region: "cn-hangzhou",
 	}
 
 	err := b.DeleteSnapshot("s-123456")
@@ -697,6 +700,7 @@ func TestDeleteSnapshot_Error(t *testing.T) {
 	b := &VolumeSnapshotter{
 		log:    newTestLogger(),
 		client: client,
+		region: "cn-hangzhou",
 	}
 
 	err := b.DeleteSnapshot("s-123456")
@@ -782,6 +786,7 @@ func TestGetVolumeInfo(t *testing.T) {
 			b := &VolumeSnapshotter{
 				log:    newTestLogger(),
 				client: client,
+				region: "cn-hangzhou",
 			}
 
 			volumeType, iops, err := b.GetVolumeInfo(test.volumeID, test.volumeAZ)
@@ -883,6 +888,7 @@ func TestDescribeSnapshot(t *testing.T) {
 			b := &VolumeSnapshotter{
 				log:    newTestLogger(),
 				client: client,
+				region: "cn-hangzhou",
 			}
 
 			snapshot, err := b.describeSnapshot(test.snapshotID)
@@ -1001,6 +1007,7 @@ func TestDescribeVolume(t *testing.T) {
 			b := &VolumeSnapshotter{
 				log:    newTestLogger(),
 				client: client,
+				region: "cn-hangzhou",
 			}
 
 			disk, err := b.describeVolume(test.volumeID, test.volumeAZ)
