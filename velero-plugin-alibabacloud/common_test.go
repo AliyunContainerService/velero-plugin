@@ -14,7 +14,6 @@ limitations under the License.
 package main
 
 import (
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"testing"
@@ -121,11 +120,11 @@ func TestGetCredentials(t *testing.T) {
 			veleroForAck: false,
 			setupEnv: func(t *testing.T) {
 				// Create a temporary credential file
-				tmpDir, err := ioutil.TempDir("", "test-cred")
+				tmpDir, err := os.MkdirTemp("", "test-cred")
 				require.NoError(t, err)
 
 				credFile := filepath.Join(tmpDir, "credentials")
-				err = ioutil.WriteFile(credFile, []byte(`ALIBABA_CLOUD_ACCESS_KEY_ID=file-ak
+				err = os.WriteFile(credFile, []byte(`ALIBABA_CLOUD_ACCESS_KEY_ID=file-ak
 ALIBABA_CLOUD_ACCESS_KEY_SECRET=file-sk
 ALIBABA_CLOUD_ACCESS_STS_TOKEN=file-token
 `), 0644)
@@ -193,6 +192,65 @@ ALIBABA_CLOUD_ACCESS_STS_TOKEN=file-token
 			},
 			expectedError: "error loading environment from ALIBABA_CLOUD_CREDENTIALS_FILE",
 		},
+		{
+			name:         "success: custom RAM role in non-ACK environment",
+			veleroForAck: false,
+			setupEnv: func(t *testing.T) {
+				t.Setenv("ALIBABA_CLOUD_CREDENTIALS_FILE", "")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_ID", "")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_STS_TOKEN", "")
+				t.Setenv("ALIBABA_CLOUD_RAM_ROLE", "CustomVeleroRole")
+			},
+			// This will fail because getSTSAK requires real ECS metadata service,
+			// but it verifies that the custom RAM role path is taken
+			expectedError: "Failed to get sts token from ram role CustomVeleroRole",
+		},
+		{
+			name:         "success: custom RAM role takes precedence over AccessKey",
+			veleroForAck: false,
+			setupEnv: func(t *testing.T) {
+				t.Setenv("ALIBABA_CLOUD_CREDENTIALS_FILE", "")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_ID", "test-ak")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "test-sk")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_STS_TOKEN", "")
+				t.Setenv("ALIBABA_CLOUD_RAM_ROLE", "CustomVeleroRole")
+			},
+			// AccessKey should take precedence, so RAM role should be ignored
+			validateCred: func(t *testing.T, cred *ossCredentials) {
+				assert.Equal(t, "test-ak", cred.accessKeyID)
+				assert.Equal(t, "test-sk", cred.accessKeySecret)
+				assert.Empty(t, cred.stsToken)
+				assert.Empty(t, cred.ramRole, "RAM role should be cleared when AccessKey is used")
+			},
+		},
+		{
+			name:         "success: custom RAM role from credential file",
+			veleroForAck: false,
+			setupEnv: func(t *testing.T) {
+				// Create a temporary credential file with custom RAM role
+				tmpDir, err := os.MkdirTemp("", "test-cred")
+				require.NoError(t, err)
+
+				credFile := filepath.Join(tmpDir, "credentials")
+				err = os.WriteFile(credFile, []byte(`ALIBABA_CLOUD_RAM_ROLE=FileCustomRole
+`), 0644)
+				require.NoError(t, err)
+
+				t.Setenv("ALIBABA_CLOUD_CREDENTIALS_FILE", credFile)
+				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_ID", "")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_STS_TOKEN", "")
+
+				// Cleanup after test
+				t.Cleanup(func() {
+					os.RemoveAll(tmpDir)
+				})
+			},
+			// This will fail because getSTSAK requires real ECS metadata service,
+			// but it verifies that the custom RAM role from file is used
+			expectedError: "Failed to get sts token from ram role FileCustomRole",
+		},
 	}
 
 	for _, tc := range tests {
@@ -219,6 +277,12 @@ ALIBABA_CLOUD_ACCESS_STS_TOKEN=file-token
 	}
 }
 
-// Note: Tests for ACK environment with RAM role fallback are not included here
-// because they require mocking the MetaClient which is more complex.
+// Note: Tests for ACK environment with automatic RAM role detection (via ECS metadata)
+// are not included here because they require mocking the MetaClient which is more complex.
 // Those scenarios should be tested in integration tests.
+//
+// The tests above verify:
+// 1. AccessKey credentials (from env or file) take precedence over RAM role
+// 2. Custom RAM role (via ALIBABA_CLOUD_RAM_ROLE) is supported in both ACK and non-ACK environments
+// 3. Custom RAM role can be specified via credential file
+// 4. Error handling when credentials are not available

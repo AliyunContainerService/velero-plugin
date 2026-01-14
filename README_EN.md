@@ -23,7 +23,7 @@ To do backup/restore on Alibaba Cloud through Velero utility, you need to instal
 To set up Velero on Alibaba Cloud, you:
 
 * Create your OSS bucket
-* Create a RAM user for Velero
+* Configure authorization
 * Install Velero and velero-plugin-for-alibabacloud
 
 ## Create OSS bucket
@@ -32,13 +32,22 @@ Velero requires an object storage bucket to store backups in, preferably unique 
 
 Please refer to the [Create a bucket documentation](https://www.alibabacloud.com/help/en/oss/user-guide/create-a-bucket-4) to create an OSS bucket.
 
-## Create RAM user
+## Configure Authorization
 
-1. Create the RAM user:
+Velero needs permissions to access Alibaba Cloud OSS and ECS services. You can choose one of the following two authorization methods:
 
-    Follow the [Create a RAM user documentation](https://www.alibabacloud.com/help/en/ram/user-guide/create-a-ram-user).
+### Option 1: Authorization via Worker RAM Role (Recommended)
 
-2. Create a custom policy:
+This option is suitable for scenarios where Velero runs on Alibaba Cloud ECS nodes, and is recommended for ACK clusters.
+
+**Prerequisites**: Compute nodes are Alibaba Cloud ECS instances.
+
+1. **Configure Worker RAM Role**:
+
+   * If you are using Alibaba Cloud ACK, the cluster nodes are already bound to a RAM role with empty permissions by default. To refine the Worker RAM role for different nodes, you can also refer to the [Use Custom Worker RAM Roles documentation](https://www.alibabacloud.com/help/en/ack/ack-managed-and-ack-dedicated/user-guide/use-custom-worker-ram-roles) to customize Worker RAM roles. You can skip this step.
+   * Otherwise, you should create a RAM role and bind it to the ECS nodes where Velero runs. Refer to the [Attach an Instance RAM Role to an ECS Instance documentation](https://www.alibabacloud.com/help/en/ecs/user-guide/attach-an-instance-ram-role-to-an-ecs-instance).
+
+2. **Create a custom policy**:
 
     Follow the [Create a custom policy documentation](https://www.alibabacloud.com/help/en/ram/create-a-custom-policy) to create a policy with the following content:
 
@@ -70,15 +79,71 @@ Please refer to the [Create a bucket documentation](https://www.alibabacloud.com
     }
     ```
 
-3. Grant permissions to the RAM user:
+3. **Grant permissions to the RAM role**:
+
+    Follow the [Grant permissions to a RAM role documentation](https://www.alibabacloud.com/help/en/ram/user-guide/grant-permissions-to-a-ram-role) to grant the above policy to the RAM role.
+
+4. **Create a Velero-specific credentials file**:
+
+    Create a Velero credentials file (`credentials-velero`) in your `install` directory:
+
+    ```
+    ALIBABA_CLOUD_RAM_ROLE=<RAM_ROLE_NAME>
+    ```
+
+    where `RAM_ROLE_NAME` is the RAM role name configured in step 1.
+
+### Option 2: Authorization via RAM User
+
+This option is suitable for non-ECS environments or scenarios requiring finer-grained control.
+
+1. **Create the RAM user**:
+
+    Follow the [Create a RAM user documentation](https://www.alibabacloud.com/help/en/ram/user-guide/create-a-ram-user).
+
+2. **Create a custom policy**:
+
+    Follow the [Create a custom policy documentation](https://www.alibabacloud.com/help/en/ram/create-a-custom-policy) to create a policy with the following content:
+
+    ```json
+    {
+        "Version": "1",
+        "Statement": [
+            {
+                "Action": [
+                    "ecs:DescribeSnapshots",
+                    "ecs:CreateSnapshot",
+                    "ecs:DeleteSnapshot",
+                    "ecs:DescribeDisks",
+                    "ecs:CreateDisk",
+                    "ecs:Addtags",
+                    "oss:PutObject",
+                    "oss:GetObject",
+                    "oss:DeleteObject",
+                    "oss:GetBucket",
+                    "oss:ListObjects",
+                    "oss:ListBuckets"
+                ],
+                "Resource": [
+                    "*"
+                ],
+                "Effect": "Allow"
+            }
+        ]
+    }
+    ```
+
+3. **Grant permissions to the RAM user**:
 
     Follow the [Grant permissions to the RAM user documentation](https://www.alibabacloud.com/help/en/ram/user-guide/grant-permissions-to-the-ram-user) to grant the above policy to the RAM user.
 
-4. Create an access key for the user:
+4. **Create an access key for the user**:
 
     Follow the [Create an AccessKey pair documentation](https://www.alibabacloud.com/help/en/ram/user-guide/create-an-accesskey-pair) to create an AccessKey for the RAM user.
 
-5. Create a Velero-specific credentials file (`credentials-velero`) in your `install` directory:
+5. **Create a Velero-specific credentials file**:
+
+    Create a Velero credentials file (`credentials-velero`) in your `install` directory:
 
     ```
     ALIBABA_CLOUD_ACCESS_KEY_ID=<ALIBABA_CLOUD_ACCESS_KEY_ID>
@@ -100,6 +165,7 @@ Run the following command to install Velero and velero-plugin-for-alibabacloud i
 ```bash
 velero install \
     --provider alibabacloud \
+    --image velero/velero:v1.17.1
     --plugins velero/velero-plugin-for-alibabacloud:v2.0.0 \
     --bucket <YOUR_BUCKET> \
     --secret-file ./credentials-velero \
@@ -129,13 +195,12 @@ velero install \
 | Parameter | Type | Description | Example |
 |:-----|:-----|:-----|:-----|
 | `--prefix` | Optional | Used to store backups from multiple clusters in the same bucket, specifies the path prefix in the OSS bucket | `--prefix cluster1/backups` |
-| `--use-node-agent` | Optional | Enable node agent support for file system level backups | `--use-node-agent` |
 
 (Optional) Customize the Velero installation further to meet your needs.
 
 ## Uninstall Velero
 
-To uninstall Velero, please refer to the [Velero official uninstall documentation](https://velero.io/docs/uninstall/).
+To uninstall Velero, please refer to the [Velero official uninstall documentation](https://velero.io/docs/v1.17/uninstalling/).
 
 [GoReportCard Widget]: https://goreportcard.com/badge/github.com/AliyunContainerService/velero-plugin
 [GoReportCardResult]: https://goreportcard.com/report/github.com/AliyunContainerService/velero-plugin
