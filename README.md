@@ -44,7 +44,7 @@ Velero 需要访问阿里云 OSS 和 ECS 服务的权限。您可以选择以下
 
 1. **配置 Worker RAM 角色**：
 
-   * 如果使用阿里云 ACK，默认已经给集群节点绑定了权限为空的 RAM 角色。为了细化不同节点的 Worker RAM 角色，也可以参考 [使用自定义 Worker RAM 角色文档](https://help.aliyun.com/zh/ack/ack-managed-and-ack-dedicated/user-guide/use-custom-worker-ram-roles) 自定义 Worker RAM 角色。可跳过本步骤。
+   * 如果使用阿里云 ACK，默认已经给集群节点绑定了权限为空的 RAM 角色，因此可以跳过本步骤。如需细化不同节点的 Worker RAM 角色，可以参考 [使用自定义 Worker RAM 角色文档](https://help.aliyun.com/zh/ack/ack-managed-and-ack-dedicated/user-guide/use-custom-worker-ram-roles) 自定义 Worker RAM 角色。
    * 否则，应该创建 RAM 角色并绑定至 Velero 运行的 ECS 节点上。参考 [为 ECS 实例授予 RAM 角色文档](https://help.aliyun.com/zh/ecs/user-guide/attach-an-instance-ram-role-to-an-ecs-instance)。
 
 2. **创建自定义策略**：
@@ -165,8 +165,8 @@ Velero 需要访问阿里云 OSS 和 ECS 服务的权限。您可以选择以下
 ```bash
 velero install \
     --provider alibabacloud \
-    --image velero/velero:v1.17.1 \
-    --plugins velero/velero-plugin-for-alibabacloud:v2.0.0 \
+    --image registry-cn-hangzhou.ack.aliyuncs.com/acs/velero:v1.17.1\
+    --plugins registry-cn-hangzhou.ack.aliyuncs.com/acs/velero-plugin-alibabacloud:v2.0.0-f857869 \
     --bucket <YOUR_BUCKET> \
     --secret-file ./credentials-velero \
     --backup-location-config region=<REGION>,network=<NETWORK> \
@@ -194,7 +194,7 @@ velero install \
 
 | 参数 | 类型 | 说明 | 示例 |
 |:-----|:-----|:-----|:-----|
-| `--prefix` | 可选 | 用于在同一 bucket 中存储多个集群的备份，指定 OSS bucket 中的路径前缀 | `--prefix cluster1/backups` |
+| `--prefix` | 可选 | 用于在同一 bucket 中存储多个集群的备份，指定 OSS bucket 中的路径前缀 | `cluster1` |
 
 （可选）根据您的需求进一步自定义 Velero 安装。更多参数请参考 [Velero 官方文档](https://velero.io/docs/)。
 

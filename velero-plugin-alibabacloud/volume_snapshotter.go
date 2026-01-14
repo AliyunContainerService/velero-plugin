@@ -154,6 +154,7 @@ func (b *VolumeSnapshotter) CreateVolumeFromSnapshot(snapshotID, volumeType, vol
 	// Create disk from snapshot with tags
 	// Do not validate  disk category and performance level, return error from ECS API d irectly
 	req := &ecs20140526.CreateDiskRequest{
+		RegionId:     tea.String(b.region),
 		SnapshotId:   tea.String(snapshotID),
 		ZoneId:       tea.String(volumeAZ),
 		DiskCategory: tea.String(volumeType),
@@ -363,6 +364,7 @@ func (b *VolumeSnapshotter) getEcsClient(cred *ossCredentials) (*ecs20140526.Cli
 // describeSnapshot describes a snapshot by ID
 func (b *VolumeSnapshotter) describeSnapshot(snapshotID string) (*ecs20140526.DescribeSnapshotsResponseBodySnapshotsSnapshot, error) {
 	req := &ecs20140526.DescribeSnapshotsRequest{
+		RegionId:    tea.String(b.region),
 		SnapshotIds: tea.String(fmt.Sprintf("[\"%s\"]", snapshotID)),
 	}
 
@@ -385,7 +387,8 @@ func (b *VolumeSnapshotter) describeSnapshot(snapshotID string) (*ecs20140526.De
 // describeVolume describes a volume by ID
 func (b *VolumeSnapshotter) describeVolume(volumeID string, volumeAZ string) (*ecs20140526.DescribeDisksResponseBodyDisksDisk, error) {
 	req := &ecs20140526.DescribeDisksRequest{
-		DiskIds: tea.String(fmt.Sprintf("[\"%s\"]", volumeID)),
+		RegionId: tea.String(b.region),
+		DiskIds:  tea.String(fmt.Sprintf("[\"%s\"]", volumeID)),
 	}
 	if volumeAZ != "" {
 		req.ZoneId = tea.String(volumeAZ)
