@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/AliyunContainerService/ack-ram-tool/pkg/ecsmetadata"
@@ -14,11 +15,14 @@ import (
 
 var MetaClient = ecsmetadata.DefaultClient
 var MetaRegion string
+var MetaZone string
 
 const (
 	regionConfigKey      = "region"
+	zoneConfigKey        = "zone"
 	networkTypeConfigKey = "network"
 	endpointConfigKey    = "endpoint"
+	notOnECSConfigKey    = "not-on-ecs"
 
 	networkTypeAccelerate = "accelerate"
 	networkTypeInternal   = "internal"
@@ -95,6 +99,27 @@ func getEcsRegionID(config map[string]string) string {
 	return region
 }
 
+// getEcsZoneID return ecs region id
+func getEcsZoneID(config map[string]string) string {
+	zone := config[zoneConfigKey]
+	if zone != "" {
+		return zone
+	}
+
+	if MetaZone != "" {
+		return MetaZone
+	}
+	zone, err := MetaClient.GetZoneId(context.Background())
+	if err != nil {
+		klog.Errorf("get MetaZone failed with error: %v", err)
+		return ""
+	}
+
+	klog.Infof("set MetaZone to %s", zone)
+	MetaZone = zone
+	return zone
+}
+
 // getRamRole return ramrole name
 func getRamRole() (string, error) {
 	return MetaClient.GetRoleName(context.Background())
@@ -120,6 +145,14 @@ type ossCredentials struct {
 	accessKeySecret string
 	stsToken        string
 	ramRole         string
+}
+
+func veleroForAck(config map[string]string) bool {
+	if config != nil && strings.ToLower(config[notOnECSConfigKey]) == "true" {
+		return false
+	}
+	// Deprecated
+	return !(strings.ToLower(os.Getenv("VELERO_FOR_ACK")) == "false")
 }
 
 // getCredentials retrieves OSS credentials based on the environment and configuration.

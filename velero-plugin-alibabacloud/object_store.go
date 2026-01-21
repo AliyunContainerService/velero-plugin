@@ -103,9 +103,8 @@ func (o *ObjectStore) Init(config map[string]string) error {
 
 	o.endpoint = getOssEndpoint(region, config)
 	o.encryptionKeyID = os.Getenv("ALIBABA_CLOUD_ENCRYPTION_KEY_ID")
-
-	veleroForAck := os.Getenv("VELERO_FOR_ACK") == "true"
-	cred, err := getCredentials(veleroForAck)
+	
+	cred, err := getCredentials(veleroForAck(config))
 	if err != nil {
 		return errors.Wrapf(err, "failed to get credentials")
 	}

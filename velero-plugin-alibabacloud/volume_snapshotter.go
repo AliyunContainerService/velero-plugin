@@ -26,14 +26,18 @@ import (
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	v1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 
 	veleroplugin "github.com/vmware-tanzu/velero/pkg/plugin/framework"
 )
 
 const (
-	ackClusterNameKey = "ACK_CLUSTER_NAME"
+	ackClusterNameKey      = "ACK_CLUSTER_NAME"
+	originalVolumeAZTagKey = "alibabacloud.velero-plugin/orginal-volume-az"
 )
 
 // DiskPerformanceLevels maps performance levels to their max IOPS values
@@ -82,11 +86,14 @@ func (w *ecsClientWrapper) DescribeDisks(request *ecs20140526.DescribeDisksReque
 
 // VolumeSnapshotter struct
 type VolumeSnapshotter struct {
-	log       logrus.FieldLogger
-	client    ecsClientInterface
-	region    string
-	ramRole   string
-	rawClient *ecs20140526.Client // Keep raw client for updateEcsClient
+	log            logrus.FieldLogger
+	client         ecsClientInterface
+	region         string
+	zone           string
+	ramRole        string
+	rawClient      *ecs20140526.Client  // Keep raw client for updateEcsClient
+	kubeClient     kubernetes.Interface // Kubernetes client for ConfigMap queries (optional)
+	supportedZones map[string]bool      // Set of supported zones from ack-cluster-profile ConfigMap
 }
 
 // newVolumeSnapshotter init a VolumeSnapshotter
@@ -108,7 +115,10 @@ func (b *VolumeSnapshotter) Init(config map[string]string) error {
 	regionID := getEcsRegionID(config)
 	b.region = regionID
 
-	veleroForAck := os.Getenv("VELERO_FOR_ACK") == "true"
+	zoneID := getEcsZoneID(config)
+	b.zone = zoneID
+
+	veleroForAck := veleroForAck(config)
 	cred, err := getCredentials(veleroForAck)
 	if err != nil {
 		return errors.Wrapf(err, "failed to get credentials")
@@ -122,6 +132,22 @@ func (b *VolumeSnapshotter) Init(config map[string]string) error {
 
 	b.rawClient = rawClient
 	b.client = &ecsClientWrapper{client: rawClient}
+	b.supportedZones = make(map[string]bool)
+
+	// Try to initialize Kubernetes client and load supported zones from ConfigMap (best-effort)
+	// This is used to determine which zones are available in the cluster
+	if kubeClient, err := b.initKubeClient(); err != nil {
+		b.log.Warnf("failed to initialize Kubernetes client (this is optional): %v", err)
+	} else {
+		b.kubeClient = kubeClient
+		// Try to load supported zones from ack-cluster-profile ConfigMap
+		if veleroForAck {
+			if err := b.loadSupportedZones(); err != nil {
+				b.log.Warnf("failed to load supported zones from ConfigMap (this is optional): %v", err)
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -142,13 +168,13 @@ func (b *VolumeSnapshotter) CreateVolumeFromSnapshot(snapshotID, volumeType, vol
 
 	tags := b.getTagsForCluster(snapInfo.Tags.Tag)
 
-	// Use volumeAZ from parameter if provided, otherwise get from metadata
+	// Use volumeAZ from parameter if provided, otherwise determine from snapshot tags or metadata
 	if volumeAZ == "" {
-		zoneID, err := MetaClient.GetZoneId(context.Background())
+		var err error
+		volumeAZ, err = b.determineVolumeAZ(snapInfo.Tags.Tag)
 		if err != nil {
-			return "", errors.Wrapf(err, "failed to get zone-id from metadata")
+			return "", err
 		}
-		volumeAZ = zoneID
 	}
 
 	// Create disk from snapshot with tags
@@ -262,7 +288,13 @@ func (b *VolumeSnapshotter) CreateSnapshot(volumeID, volumeAZ string, tags map[s
 		DiskId: tea.String(volumeID),
 	}
 
-	newTags := b.getTags(tags, volumeInfo.Tags.Tag)
+	// Get volume zone ID for tagging
+	volumeZoneID := ""
+	if volumeInfo.ZoneId != nil {
+		volumeZoneID = tea.StringValue(volumeInfo.ZoneId)
+	}
+
+	newTags := b.getTagsWithVolumeZone(tags, volumeInfo.Tags.Tag, volumeZoneID)
 	if len(newTags) > 0 {
 		req.Tag = newTags
 	}
@@ -481,9 +513,141 @@ func (b *VolumeSnapshotter) getTags(veleroTags map[string]string, volumeTags []*
 	return result
 }
 
+// getTagsWithVolumeZone processes Velero tags and volume tags to create snapshot tags,
+// and adds original volume AZ tag if not present
+func (b *VolumeSnapshotter) getTagsWithVolumeZone(veleroTags map[string]string, volumeTags []*ecs20140526.DescribeDisksResponseBodyDisksDiskTagsTag, volumeZoneID string) []*ecs20140526.CreateSnapshotRequestTag {
+	result := b.getTags(veleroTags, volumeTags)
+
+	// Check if original volume AZ tag already exists in result
+	hasOriginalVolumeAZTag := false
+	for _, tag := range result {
+		if tag != nil && tea.StringValue(tag.Key) == originalVolumeAZTagKey {
+			hasOriginalVolumeAZTag = true
+			break
+		}
+	}
+
+	// If not present and volumeZoneID is available, add it
+	if !hasOriginalVolumeAZTag && volumeZoneID != "" {
+		result = append(result, &ecs20140526.CreateSnapshotRequestTag{
+			Key:   tea.String(originalVolumeAZTagKey),
+			Value: tea.String(volumeZoneID),
+		})
+	}
+
+	return result
+}
+
+// determineVolumeAZ determines the availability zone for creating a volume from snapshot
+// It tries to use the original zone from snapshot tags, falling back to current node zone
+func (b *VolumeSnapshotter) determineVolumeAZ(snapshotTags []*ecs20140526.DescribeSnapshotsResponseBodySnapshotsSnapshotTagsTag) (string, error) {
+	var originalZone, currentZone string
+
+	// Try to get originalZone from snapshot tags (the zone where the original volume was created)
+	for _, tag := range snapshotTags {
+		if tag != nil && tea.StringValue(tag.TagKey) == originalVolumeAZTagKey {
+			originalZone = tea.StringValue(tag.TagValue)
+			break
+		}
+	}
+
+	// Get currentZone from current node metadata (the zone where Velero is running) or config
+	currentZone = b.zone
+
+	// If originalZone matches currentZone, use originalZone
+	if originalZone != "" && originalZone == currentZone {
+		return originalZone, nil
+	} else if originalZone != "" {
+		// If originalZone exists but differs from currentZone, check if originalZone is in supported zones
+		if b.supportedZones[originalZone] {
+			return originalZone, nil
+		} else {
+			return currentZone, nil
+		}
+	} else {
+		// No originalZone from snapshot tags, use currentZone
+		return currentZone, nil
+	}
+}
+
+// initKubeClient initializes a Kubernetes client using in-cluster config
+// Returns nil if not running in a Kubernetes cluster
+func (b *VolumeSnapshotter) initKubeClient() (kubernetes.Interface, error) {
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		return nil, errors.Wrapf(err, "not running in cluster or failed to get in-cluster config")
+	}
+
+	client, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to create Kubernetes client")
+	}
+
+	return client, nil
+}
+
+// loadSupportedZones loads supported zones from ack-cluster-profile ConfigMap in kube-system namespace.
+// This is a best-effort operation - if it fails, we just continue without supported zones info.
+// It handles Kubernetes client operations and delegates the actual parsing to parseClusterConfig.
+func (b *VolumeSnapshotter) loadSupportedZones() error {
+	if b.kubeClient == nil {
+		return errors.New("Kubernetes client not available")
+	}
+
+	// Get ack-cluster-profile ConfigMap from kube-system namespace
+	cm, err := b.kubeClient.CoreV1().ConfigMaps("kube-system").Get(context.Background(), "ack-cluster-profile", metav1.GetOptions{})
+	if err != nil {
+		return errors.Wrapf(err, "failed to get ack-cluster-profile ConfigMap")
+	}
+
+	zones, err := parseClusterConfig(cm.Data)
+	if err != nil {
+		return errors.Wrapf(err, "failed to parse cluster config")
+	}
+
+	b.supportedZones = zones
+	b.log.Infof("loaded %d supported zones from ack-cluster-profile ConfigMap: %v", len(zones), zones)
+	return nil
+}
+
 // ============================================================================
-// PersistentVolume utility functions (not part of Velero plugin interface)
+//  Utility functions (not part of Velero plugin interface)
 // ============================================================================
+
+// parseClusterConfig parses the vsw-zone field from ConfigMap data and extracts supported zones.
+// The vsw-zone format is: vsw-xxx:zone1,vsw-yyy:zone2,...
+// It returns a map of zone names (values after the colon) to true.
+func parseClusterConfig(data map[string]string) (map[string]bool, error) {
+	if data == nil {
+		return nil, errors.New("data is nil")
+	}
+
+	// Extract vsw-zone field from ConfigMap data
+	vswZoneData, ok := data["vsw-zone"]
+	if !ok {
+		return nil, errors.New("vsw-zone field not found in ack-cluster-profile ConfigMap")
+	}
+
+	// Parse vsw-zone format: vsw-xxx:zone1,vsw-yyy:zone2,...
+	// Extract zones (values after the colon)
+	zones := make(map[string]bool)
+	pairs := strings.Split(vswZoneData, ",")
+	for _, pair := range pairs {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		// Split by colon to get vsw-id:zone
+		parts := strings.SplitN(pair, ":", 2)
+		if len(parts) == 2 {
+			zone := strings.TrimSpace(parts[1])
+			if zone != "" {
+				zones[zone] = true
+			}
+		}
+	}
+	return zones, nil
+}
 
 // checkCSIVolumeDriver validates CSI volume driver
 func checkCSIVolumeDriver(driver string) error {

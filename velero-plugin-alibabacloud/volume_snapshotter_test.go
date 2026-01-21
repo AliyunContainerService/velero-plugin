@@ -1025,3 +1025,308 @@ func TestDescribeVolume(t *testing.T) {
 		})
 	}
 }
+
+// TestGetTagsWithVolumeZone tests the getTagsWithVolumeZone function
+func TestGetTagsWithVolumeZone(t *testing.T) {
+	tests := []struct {
+		name          string
+		veleroTags    map[string]string
+		volumeTags    []*ecs20140526.DescribeDisksResponseBodyDisksDiskTagsTag
+		volumeZoneID  string
+		expectedCount int
+		hasOriginalAZ bool
+		originalAZVal string
+	}{
+		{
+			name:          "add original AZ tag when not present",
+			veleroTags:    map[string]string{"velero.io/backup": "backup-1"},
+			volumeTags:    []*ecs20140526.DescribeDisksResponseBodyDisksDiskTagsTag{},
+			volumeZoneID:  "cn-hangzhou-k",
+			expectedCount: 2, // velero tag + original AZ tag
+			hasOriginalAZ: true,
+			originalAZVal: "cn-hangzhou-k",
+		},
+		{
+			name:         "do not add original AZ tag when already present in volume tags",
+			veleroTags:   map[string]string{"velero.io/backup": "backup-1"},
+			volumeZoneID: "cn-hangzhou-k",
+			volumeTags: []*ecs20140526.DescribeDisksResponseBodyDisksDiskTagsTag{
+				{TagKey: tea.String(originalVolumeAZTagKey), TagValue: tea.String("cn-hangzhou-l")},
+			},
+			expectedCount: 2, // velero tag + existing original AZ tag
+			hasOriginalAZ: true,
+			originalAZVal: "cn-hangzhou-l", // Should keep existing value
+		},
+		{
+			name: "do not add original AZ tag when already present in velero tags",
+			veleroTags: map[string]string{
+				"velero.io/backup":     "backup-1",
+				originalVolumeAZTagKey: "cn-hangzhou-l",
+			},
+			volumeTags:    []*ecs20140526.DescribeDisksResponseBodyDisksDiskTagsTag{},
+			volumeZoneID:  "cn-hangzhou-k",
+			expectedCount: 2, // velero tags (including original AZ)
+			hasOriginalAZ: true,
+			originalAZVal: "cn-hangzhou-l", // Should keep velero tag value
+		},
+		{
+			name:          "do not add original AZ tag when volumeZoneID is empty",
+			veleroTags:    map[string]string{"velero.io/backup": "backup-1"},
+			volumeTags:    []*ecs20140526.DescribeDisksResponseBodyDisksDiskTagsTag{},
+			volumeZoneID:  "",
+			expectedCount: 1, // only velero tag
+			hasOriginalAZ: false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			b := &VolumeSnapshotter{
+				log: newTestLogger(),
+			}
+
+			result := b.getTagsWithVolumeZone(test.veleroTags, test.volumeTags, test.volumeZoneID)
+
+			assert.Equal(t, test.expectedCount, len(result))
+
+			// Check if original AZ tag exists
+			found := false
+			for _, tag := range result {
+				if tag != nil && tea.StringValue(tag.Key) == originalVolumeAZTagKey {
+					found = true
+					if test.hasOriginalAZ {
+						assert.Equal(t, test.originalAZVal, tea.StringValue(tag.Value))
+					}
+					break
+				}
+			}
+			assert.Equal(t, test.hasOriginalAZ, found)
+		})
+	}
+}
+
+// For testing loadSupportedZones, we'll test the parsing logic separately
+// and use a simpler approach that doesn't require full kubernetes.Interface implementation
+
+// TestLoadSupportedZones tests the loadSupportedZones function
+// Note: This test is simplified to test the parsing logic
+// Full integration with kubernetes.Interface would require a more complex mock setup
+// TestLoadSupportedZones tests the loadSupportedZones function
+// It only tests Kubernetes client related errors, parsing logic is tested separately in TestParseClusterConfig
+func TestLoadSupportedZones(t *testing.T) {
+	t.Run("kubeClient is nil", func(t *testing.T) {
+		b := &VolumeSnapshotter{
+			log:            newTestLogger(),
+			kubeClient:     nil,
+			supportedZones: make(map[string]bool),
+		}
+
+		err := b.loadSupportedZones()
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "Kubernetes client not available")
+	})
+}
+
+// TestParseClusterConfig tests the parseClusterConfig function
+func TestParseClusterConfig(t *testing.T) {
+	tests := []struct {
+		name          string
+		data          map[string]string
+		expectedZones map[string]bool
+		expectedError string
+	}{
+		{
+			name: "successfully parse supported zones",
+			data: map[string]string{
+				"vsw-zone": "vsw-2zegxoti9moxn5797q0wc:cn-beijing-l,vsw-2zelzo4uk3hip3o7nzkua:cn-beijing-k,vsw-2zegiyiy0jeh7imiquqlc:cn-beijing-j",
+			},
+			expectedZones: map[string]bool{
+				"cn-beijing-l": true,
+				"cn-beijing-k": true,
+				"cn-beijing-j": true,
+			},
+		},
+		{
+			name: "handle empty pairs",
+			data: map[string]string{
+				"vsw-zone": "vsw-xxx:cn-hangzhou-k,,vsw-yyy:cn-hangzhou-l",
+			},
+			expectedZones: map[string]bool{
+				"cn-hangzhou-k": true,
+				"cn-hangzhou-l": true,
+			},
+		},
+		{
+			name: "handle spaces in zone names",
+			data: map[string]string{
+				"vsw-zone": "vsw-xxx: cn-hangzhou-k ,vsw-yyy:cn-hangzhou-l",
+			},
+			expectedZones: map[string]bool{
+				"cn-hangzhou-k": true,
+				"cn-hangzhou-l": true,
+			},
+		},
+		{
+			name: "handle empty zone value",
+			data: map[string]string{
+				"vsw-zone": "vsw-xxx:cn-hangzhou-k,vsw-yyy:",
+			},
+			expectedZones: map[string]bool{
+				"cn-hangzhou-k": true,
+			},
+		},
+		{
+			name: "handle pair without colon",
+			data: map[string]string{
+				"vsw-zone": "vsw-xxx:cn-hangzhou-k,invalid-pair",
+			},
+			expectedZones: map[string]bool{
+				"cn-hangzhou-k": true,
+			},
+		},
+		{
+			name:          "data is nil",
+			data:          nil,
+			expectedError: "data is nil",
+		},
+		{
+			name:          "vsw-zone field not found",
+			data:          map[string]string{},
+			expectedError: "vsw-zone field not found",
+		},
+		{
+			name: "handle empty vsw-zone value",
+			data: map[string]string{
+				"vsw-zone": "",
+			},
+			expectedZones: map[string]bool{},
+		},
+		{
+			name: "handle whitespace-only pairs",
+			data: map[string]string{
+				"vsw-zone": "  ,  ,vsw-xxx:cn-hangzhou-k,  ",
+			},
+			expectedZones: map[string]bool{
+				"cn-hangzhou-k": true,
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			zones, err := parseClusterConfig(test.data)
+
+			if test.expectedError != "" {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), test.expectedError)
+				assert.Nil(t, zones)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, test.expectedZones, zones)
+			}
+		})
+	}
+}
+
+// TestDetermineVolumeAZ tests the determineVolumeAZ function
+func TestDetermineVolumeAZ(t *testing.T) {
+	tests := []struct {
+		name           string
+		currentZone    string
+		snapshotTags   []*ecs20140526.DescribeSnapshotsResponseBodySnapshotsSnapshotTagsTag
+		supportedZones map[string]bool
+		expectedZone   string
+	}{
+		{
+			name:        "originalZone matches currentZone",
+			currentZone: "cn-hangzhou-k",
+			snapshotTags: []*ecs20140526.DescribeSnapshotsResponseBodySnapshotsSnapshotTagsTag{
+				{TagKey: tea.String(originalVolumeAZTagKey), TagValue: tea.String("cn-hangzhou-k")},
+			},
+			supportedZones: map[string]bool{},
+			expectedZone:   "cn-hangzhou-k",
+		},
+		{
+			name:        "originalZone in supported zones",
+			currentZone: "cn-beijing-k",
+			snapshotTags: []*ecs20140526.DescribeSnapshotsResponseBodySnapshotsSnapshotTagsTag{
+				{TagKey: tea.String(originalVolumeAZTagKey), TagValue: tea.String("cn-beijing-l")},
+			},
+			supportedZones: map[string]bool{
+				"cn-beijing-l": true,
+				"cn-beijing-k": true,
+			},
+			expectedZone: "cn-beijing-l",
+		},
+		{
+			name:        "originalZone not in supported zones",
+			currentZone: "cn-beijing-k",
+			snapshotTags: []*ecs20140526.DescribeSnapshotsResponseBodySnapshotsSnapshotTagsTag{
+				{TagKey: tea.String(originalVolumeAZTagKey), TagValue: tea.String("cn-beijing-m")},
+			},
+			supportedZones: map[string]bool{
+				"cn-beijing-l": true,
+				"cn-beijing-k": true,
+			},
+			expectedZone: "cn-beijing-k", // Should fall back to currentZone
+		},
+		{
+			name:         "no originalZone in snapshot tags",
+			currentZone:  "cn-beijing-k",
+			snapshotTags: []*ecs20140526.DescribeSnapshotsResponseBodySnapshotsSnapshotTagsTag{},
+			supportedZones: map[string]bool{
+				"cn-beijing-l": true,
+			},
+			expectedZone: "cn-beijing-k", // Should use currentZone
+		},
+		{
+			name:        "originalZone exists but empty currentZone",
+			currentZone: "",
+			snapshotTags: []*ecs20140526.DescribeSnapshotsResponseBodySnapshotsSnapshotTagsTag{
+				{TagKey: tea.String(originalVolumeAZTagKey), TagValue: tea.String("cn-beijing-l")},
+			},
+			supportedZones: map[string]bool{
+				"cn-beijing-l": true,
+			},
+			expectedZone: "cn-beijing-l", // Should use originalZone if in supported zones
+		},
+		{
+			name:        "originalZone exists but empty currentZone and not in supported zones",
+			currentZone: "",
+			snapshotTags: []*ecs20140526.DescribeSnapshotsResponseBodySnapshotsSnapshotTagsTag{
+				{TagKey: tea.String(originalVolumeAZTagKey), TagValue: tea.String("cn-beijing-m")},
+			},
+			supportedZones: map[string]bool{
+				"cn-beijing-l": true,
+			},
+			expectedZone: "", // Should use empty currentZone
+		},
+		{
+			name:        "nil tag in snapshot tags",
+			currentZone: "cn-hangzhou-k",
+			snapshotTags: []*ecs20140526.DescribeSnapshotsResponseBodySnapshotsSnapshotTagsTag{
+				nil,
+				{TagKey: tea.String(originalVolumeAZTagKey), TagValue: tea.String("cn-hangzhou-l")},
+			},
+			supportedZones: map[string]bool{
+				"cn-hangzhou-l": true,
+			},
+			expectedZone: "cn-hangzhou-l",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			b := &VolumeSnapshotter{
+				log:            newTestLogger(),
+				zone:           test.currentZone,
+				supportedZones: test.supportedZones,
+			}
+
+			zone, err := b.determineVolumeAZ(test.snapshotTags)
+
+			assert.NoError(t, err)
+			assert.Equal(t, test.expectedZone, zone)
+		})
+	}
+}

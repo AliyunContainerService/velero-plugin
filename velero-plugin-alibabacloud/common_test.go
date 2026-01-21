@@ -286,3 +286,163 @@ ALIBABA_CLOUD_ACCESS_STS_TOKEN=file-token
 // 2. Custom RAM role (via ALIBABA_CLOUD_RAM_ROLE) is supported in both ACK and non-ACK environments
 // 3. Custom RAM role can be specified via credential file
 // 4. Error handling when credentials are not available
+
+func TestVeleroForAck(t *testing.T) {
+	tests := []struct {
+		name           string
+		config         map[string]string
+		veleroForAck   string
+		expectedResult bool
+	}{
+		{
+			name:           "config is nil, environment variable not set",
+			config:         nil,
+			veleroForAck:   "",
+			expectedResult: true,
+		},
+		{
+			name:           "config is nil, environment variable set to false",
+			config:         nil,
+			veleroForAck:   "false",
+			expectedResult: false,
+		},
+		{
+			name:           "config is nil, environment variable set to true",
+			config:         nil,
+			veleroForAck:   "true",
+			expectedResult: true,
+		},
+		{
+			name: "config with not-on-ecs=true (lowercase), should return false regardless of env",
+			config: map[string]string{
+				"not-on-ecs": "true",
+			},
+			veleroForAck:   "true",
+			expectedResult: false,
+		},
+		{
+			name: "config with not-on-ecs=True (mixed case), should return false regardless of env",
+			config: map[string]string{
+				"not-on-ecs": "True",
+			},
+			veleroForAck:   "true",
+			expectedResult: false,
+		},
+		{
+			name: "config with not-on-ecs=TRUE (uppercase), should return false regardless of env",
+			config: map[string]string{
+				"not-on-ecs": "TRUE",
+			},
+			veleroForAck:   "true",
+			expectedResult: false,
+		},
+		{
+			name: "config with not-on-ecs=true, environment variable set to false, should return false",
+			config: map[string]string{
+				"not-on-ecs": "true",
+			},
+			veleroForAck:   "false",
+			expectedResult: false,
+		},
+		{
+			name: "config with not-on-ecs=false, should check environment variable",
+			config: map[string]string{
+				"not-on-ecs": "false",
+			},
+			veleroForAck:   "false",
+			expectedResult: false,
+		},
+		{
+			name: "config with not-on-ecs=false, environment variable not set, should return true",
+			config: map[string]string{
+				"not-on-ecs": "false",
+			},
+			veleroForAck:   "",
+			expectedResult: true,
+		},
+		{
+			name: "config with not-on-ecs=yes, should check environment variable",
+			config: map[string]string{
+				"not-on-ecs": "yes",
+			},
+			veleroForAck:   "false",
+			expectedResult: false,
+		},
+		{
+			name: "config without not-on-ecs key, should check environment variable",
+			config: map[string]string{
+				"other-key": "value",
+			},
+			veleroForAck:   "false",
+			expectedResult: false,
+		},
+		{
+			name:           "config is empty map, should check environment variable",
+			config:         map[string]string{},
+			veleroForAck:   "false",
+			expectedResult: false,
+		},
+		{
+			name:           "config is empty map, environment variable not set, should return true",
+			config:         map[string]string{},
+			veleroForAck:   "",
+			expectedResult: true,
+		},
+		{
+			name:           "config is nil, environment variable set to False (mixed case)",
+			config:         nil,
+			veleroForAck:   "False",
+			expectedResult: false,
+		},
+		{
+			name:           "config is nil, environment variable set to FALSE (uppercase)",
+			config:         nil,
+			veleroForAck:   "FALSE",
+			expectedResult: false,
+		},
+		{
+			name:           "config is nil, environment variable set to True (mixed case)",
+			config:         nil,
+			veleroForAck:   "True",
+			expectedResult: true,
+		},
+		{
+			name:           "config is nil, environment variable set to TRUE (uppercase)",
+			config:         nil,
+			veleroForAck:   "TRUE",
+			expectedResult: true,
+		},
+		{
+			name:           "config is nil, environment variable set to other value",
+			config:         nil,
+			veleroForAck:   "yes",
+			expectedResult: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Save original value
+			originalValue := os.Getenv("VELERO_FOR_ACK")
+			defer func() {
+				// Restore original value
+				if originalValue == "" {
+					os.Unsetenv("VELERO_FOR_ACK")
+				} else {
+					os.Setenv("VELERO_FOR_ACK", originalValue)
+				}
+			}()
+
+			// Set test value
+			if tc.veleroForAck == "" {
+				os.Unsetenv("VELERO_FOR_ACK")
+			} else {
+				os.Setenv("VELERO_FOR_ACK", tc.veleroForAck)
+			}
+
+			// Call function and verify result
+			result := veleroForAck(tc.config)
+			assert.Equal(t, tc.expectedResult, result)
+		})
+	}
+}
