@@ -108,7 +108,7 @@ func newVolumeSnapshotter(logger logrus.FieldLogger) *VolumeSnapshotter {
 // configuration key-value pairs. It returns an error if the VolumeSnapshotter
 // cannot be initialized from the provided config.
 func (b *VolumeSnapshotter) Init(config map[string]string) error {
-	if err := veleroplugin.ValidateVolumeSnapshotterConfigKeys(config, regionConfigKey); err != nil {
+	if err := veleroplugin.ValidateVolumeSnapshotterConfigKeys(config, validConfigKeys...); err != nil {
 		return errors.Wrapf(err, "failed to validate volume snapshotter config keys")
 	}
 
@@ -118,8 +118,7 @@ func (b *VolumeSnapshotter) Init(config map[string]string) error {
 	zoneID := getEcsZoneID(config)
 	b.zone = zoneID
 
-	veleroForAck := veleroForAck(config)
-	cred, err := getCredentials(veleroForAck)
+	cred, err := getCredentials(config)
 	if err != nil {
 		return errors.Wrapf(err, "failed to get credentials")
 	}
@@ -141,7 +140,7 @@ func (b *VolumeSnapshotter) Init(config map[string]string) error {
 	} else {
 		b.kubeClient = kubeClient
 		// Try to load supported zones from ack-cluster-profile ConfigMap
-		if veleroForAck {
+		if veleroForAck(config) {
 			if err := b.loadSupportedZones(); err != nil {
 				b.log.Warnf("failed to load supported zones from ConfigMap (this is optional): %v", err)
 			}

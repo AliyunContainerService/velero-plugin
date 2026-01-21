@@ -78,19 +78,20 @@ func TestGetOssEndpoint(t *testing.T) {
 func TestGetCredentials(t *testing.T) {
 	tests := []struct {
 		name          string
-		veleroForAck  bool
-		setupEnv      func(*testing.T)
+		config        map[string]string
+		setupEnv      func(*testing.T) map[string]string
 		expectedError string
 		validateCred  func(*testing.T, *ossCredentials)
 	}{
 		{
-			name:         "success: get credentials from env directly",
-			veleroForAck: false,
-			setupEnv: func(t *testing.T) {
+			name:   "success: get credentials from env directly",
+			config: nil,
+			setupEnv: func(t *testing.T) map[string]string {
 				t.Setenv("ALIBABA_CLOUD_CREDENTIALS_FILE", "")
 				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_ID", "test-ak")
 				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "test-sk")
 				t.Setenv("ALIBABA_CLOUD_ACCESS_STS_TOKEN", "")
+				return nil
 			},
 			validateCred: func(t *testing.T, cred *ossCredentials) {
 				assert.Equal(t, "test-ak", cred.accessKeyID)
@@ -100,13 +101,14 @@ func TestGetCredentials(t *testing.T) {
 			},
 		},
 		{
-			name:         "success: get credentials from env with STS token",
-			veleroForAck: false,
-			setupEnv: func(t *testing.T) {
+			name:   "success: get credentials from env with STS token",
+			config: nil,
+			setupEnv: func(t *testing.T) map[string]string {
 				t.Setenv("ALIBABA_CLOUD_CREDENTIALS_FILE", "")
 				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_ID", "test-ak")
 				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "test-sk")
 				t.Setenv("ALIBABA_CLOUD_ACCESS_STS_TOKEN", "test-token")
+				return nil
 			},
 			validateCred: func(t *testing.T, cred *ossCredentials) {
 				assert.Equal(t, "test-ak", cred.accessKeyID)
@@ -116,9 +118,9 @@ func TestGetCredentials(t *testing.T) {
 			},
 		},
 		{
-			name:         "success: get credentials from file",
-			veleroForAck: false,
-			setupEnv: func(t *testing.T) {
+			name:   "success: get credentials from file",
+			config: nil,
+			setupEnv: func(t *testing.T) map[string]string {
 				// Create a temporary credential file
 				tmpDir, err := os.MkdirTemp("", "test-cred")
 				require.NoError(t, err)
@@ -131,14 +133,11 @@ ALIBABA_CLOUD_ACCESS_STS_TOKEN=file-token
 				require.NoError(t, err)
 
 				t.Setenv("ALIBABA_CLOUD_CREDENTIALS_FILE", credFile)
-				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_ID", "")
-				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "")
-				t.Setenv("ALIBABA_CLOUD_ACCESS_STS_TOKEN", "")
-
 				// Cleanup after test
 				t.Cleanup(func() {
 					os.RemoveAll(tmpDir)
 				})
+				return nil
 			},
 			validateCred: func(t *testing.T, cred *ossCredentials) {
 				assert.Equal(t, "file-ak", cred.accessKeyID)
@@ -148,73 +147,125 @@ ALIBABA_CLOUD_ACCESS_STS_TOKEN=file-token
 			},
 		},
 		{
-			name:         "error: non-ACK environment without credentials",
-			veleroForAck: false,
-			setupEnv: func(t *testing.T) {
+			name:   "success: get credentials from file via config",
+			config: nil, // Will be set in setupEnv
+			setupEnv: func(t *testing.T) map[string]string {
+				// Create a temporary credential file
+				tmpDir, err := os.MkdirTemp("", "test-cred-config")
+				require.NoError(t, err)
+
+				credFile := filepath.Join(tmpDir, "credentials")
+				err = os.WriteFile(credFile, []byte(`ALIBABA_CLOUD_ACCESS_KEY_ID=config-file-ak
+ALIBABA_CLOUD_ACCESS_KEY_SECRET=config-file-sk
+ALIBABA_CLOUD_ACCESS_STS_TOKEN=config-file-token
+`), 0644)
+				require.NoError(t, err)
+
 				t.Setenv("ALIBABA_CLOUD_CREDENTIALS_FILE", "")
 				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_ID", "")
 				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "")
 				t.Setenv("ALIBABA_CLOUD_ACCESS_STS_TOKEN", "")
+
+				// Cleanup after test
+				t.Cleanup(func() {
+					os.RemoveAll(tmpDir)
+				})
+
+				return map[string]string{"credentialsFile": credFile}
+			},
+			validateCred: func(t *testing.T, cred *ossCredentials) {
+				assert.Equal(t, "config-file-ak", cred.accessKeyID)
+				assert.Equal(t, "config-file-sk", cred.accessKeySecret)
+				assert.Equal(t, "config-file-token", cred.stsToken)
+				assert.Empty(t, cred.ramRole)
+			},
+		},
+		{
+			name:   "error: non-ACK environment without credentials",
+			config: map[string]string{"notOnECS": "true"},
+			setupEnv: func(t *testing.T) map[string]string {
+				t.Setenv("ALIBABA_CLOUD_CREDENTIALS_FILE", "")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_ID", "")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_STS_TOKEN", "")
+				return nil
 			},
 			expectedError: "ALIBABA_CLOUD_ACCESS_KEY_ID or ALIBABA_CLOUD_ACCESS_KEY_SECRET environment variable is not set",
 		},
 		{
-			name:         "error: non-ACK environment with only AK",
-			veleroForAck: false,
-			setupEnv: func(t *testing.T) {
+			name:   "error: non-ACK environment with only AK",
+			config: map[string]string{"notOnECS": "true"},
+			setupEnv: func(t *testing.T) map[string]string {
 				t.Setenv("ALIBABA_CLOUD_CREDENTIALS_FILE", "")
 				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_ID", "test-ak")
 				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "")
 				t.Setenv("ALIBABA_CLOUD_ACCESS_STS_TOKEN", "")
+				return nil
 			},
 			expectedError: "ALIBABA_CLOUD_ACCESS_KEY_ID or ALIBABA_CLOUD_ACCESS_KEY_SECRET environment variable is not set",
 		},
 		{
-			name:         "error: non-ACK environment with only SK",
-			veleroForAck: false,
-			setupEnv: func(t *testing.T) {
+			name:   "error: non-ACK environment with only SK",
+			config: map[string]string{"notOnECS": "true"},
+			setupEnv: func(t *testing.T) map[string]string {
 				t.Setenv("ALIBABA_CLOUD_CREDENTIALS_FILE", "")
 				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_ID", "")
 				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "test-sk")
 				t.Setenv("ALIBABA_CLOUD_ACCESS_STS_TOKEN", "")
+				return nil
 			},
 			expectedError: "ALIBABA_CLOUD_ACCESS_KEY_ID or ALIBABA_CLOUD_ACCESS_KEY_SECRET environment variable is not set",
 		},
 		{
-			name:         "error: invalid credential file",
-			veleroForAck: false,
-			setupEnv: func(t *testing.T) {
+			name:   "error: invalid credential file",
+			config: nil,
+			setupEnv: func(t *testing.T) map[string]string {
 				// Set a non-existent file
 				t.Setenv("ALIBABA_CLOUD_CREDENTIALS_FILE", "/nonexistent/file/path")
 				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_ID", "")
 				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "")
 				t.Setenv("ALIBABA_CLOUD_ACCESS_STS_TOKEN", "")
+				return nil
 			},
-			expectedError: "error loading environment from ALIBABA_CLOUD_CREDENTIALS_FILE",
+			expectedError: "error loading credientials file",
 		},
 		{
-			name:         "success: custom RAM role in non-ACK environment",
-			veleroForAck: false,
-			setupEnv: func(t *testing.T) {
+			name:   "error: invalid credential file from config",
+			config: map[string]string{"credentialsFile": "/nonexistent/file/path"},
+			setupEnv: func(t *testing.T) map[string]string {
+				t.Setenv("ALIBABA_CLOUD_CREDENTIALS_FILE", "")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_ID", "")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_STS_TOKEN", "")
+				return nil
+			},
+			expectedError: "error loading credientials file",
+		},
+		{
+			name:   "success: custom RAM role in non-ACK environment",
+			config: map[string]string{"notOnECS": "true"},
+			setupEnv: func(t *testing.T) map[string]string {
 				t.Setenv("ALIBABA_CLOUD_CREDENTIALS_FILE", "")
 				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_ID", "")
 				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "")
 				t.Setenv("ALIBABA_CLOUD_ACCESS_STS_TOKEN", "")
 				t.Setenv("ALIBABA_CLOUD_RAM_ROLE", "CustomVeleroRole")
+				return nil
 			},
 			// This will fail because getSTSAK requires real ECS metadata service,
 			// but it verifies that the custom RAM role path is taken
 			expectedError: "Failed to get sts token from ram role CustomVeleroRole",
 		},
 		{
-			name:         "success: custom RAM role takes precedence over AccessKey",
-			veleroForAck: false,
-			setupEnv: func(t *testing.T) {
+			name:   "success: custom RAM role takes precedence over AccessKey",
+			config: nil,
+			setupEnv: func(t *testing.T) map[string]string {
 				t.Setenv("ALIBABA_CLOUD_CREDENTIALS_FILE", "")
 				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_ID", "test-ak")
 				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "test-sk")
 				t.Setenv("ALIBABA_CLOUD_ACCESS_STS_TOKEN", "")
 				t.Setenv("ALIBABA_CLOUD_RAM_ROLE", "CustomVeleroRole")
+				return nil
 			},
 			// AccessKey should take precedence, so RAM role should be ignored
 			validateCred: func(t *testing.T, cred *ossCredentials) {
@@ -225,9 +276,9 @@ ALIBABA_CLOUD_ACCESS_STS_TOKEN=file-token
 			},
 		},
 		{
-			name:         "success: custom RAM role from credential file",
-			veleroForAck: false,
-			setupEnv: func(t *testing.T) {
+			name:   "success: custom RAM role from credential file",
+			config: nil,
+			setupEnv: func(t *testing.T) map[string]string {
 				// Create a temporary credential file with custom RAM role
 				tmpDir, err := os.MkdirTemp("", "test-cred")
 				require.NoError(t, err)
@@ -238,14 +289,11 @@ ALIBABA_CLOUD_ACCESS_STS_TOKEN=file-token
 				require.NoError(t, err)
 
 				t.Setenv("ALIBABA_CLOUD_CREDENTIALS_FILE", credFile)
-				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_ID", "")
-				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "")
-				t.Setenv("ALIBABA_CLOUD_ACCESS_STS_TOKEN", "")
-
 				// Cleanup after test
 				t.Cleanup(func() {
 					os.RemoveAll(tmpDir)
 				})
+				return nil
 			},
 			// This will fail because getSTSAK requires real ECS metadata service,
 			// but it verifies that the custom RAM role from file is used
@@ -255,11 +303,17 @@ ALIBABA_CLOUD_ACCESS_STS_TOKEN=file-token
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			// Setup environment
-			tc.setupEnv(t)
+			// Setup environment and get config
+			config := tc.config
+			if tc.setupEnv != nil {
+				setupConfig := tc.setupEnv(t)
+				if setupConfig != nil {
+					config = setupConfig
+				}
+			}
 
 			// Call getCredentials
-			cred, err := getCredentials(tc.veleroForAck)
+			cred, err := getCredentials(config)
 
 			// Validate results
 			if tc.expectedError != "" {
@@ -313,57 +367,57 @@ func TestVeleroForAck(t *testing.T) {
 			expectedResult: true,
 		},
 		{
-			name: "config with not-on-ecs=true (lowercase), should return false regardless of env",
+			name: "config with notOnECS=true (lowercase), should return false regardless of env",
 			config: map[string]string{
-				"not-on-ecs": "true",
+				"notOnECS": "true",
 			},
 			veleroForAck:   "true",
 			expectedResult: false,
 		},
 		{
-			name: "config with not-on-ecs=True (mixed case), should return false regardless of env",
+			name: "config with notOnECS=True (mixed case), should return false regardless of env",
 			config: map[string]string{
-				"not-on-ecs": "True",
+				"notOnECS": "True",
 			},
 			veleroForAck:   "true",
 			expectedResult: false,
 		},
 		{
-			name: "config with not-on-ecs=TRUE (uppercase), should return false regardless of env",
+			name: "config with notOnECS=TRUE (uppercase), should return false regardless of env",
 			config: map[string]string{
-				"not-on-ecs": "TRUE",
+				"notOnECS": "TRUE",
 			},
 			veleroForAck:   "true",
 			expectedResult: false,
 		},
 		{
-			name: "config with not-on-ecs=true, environment variable set to false, should return false",
+			name: "config with notOnECS=true, environment variable set to false, should return false",
 			config: map[string]string{
-				"not-on-ecs": "true",
+				"notOnECS": "true",
 			},
 			veleroForAck:   "false",
 			expectedResult: false,
 		},
 		{
-			name: "config with not-on-ecs=false, should check environment variable",
+			name: "config with notOnECS=false, should check environment variable",
 			config: map[string]string{
-				"not-on-ecs": "false",
+				"notOnECS": "false",
 			},
 			veleroForAck:   "false",
 			expectedResult: false,
 		},
 		{
-			name: "config with not-on-ecs=false, environment variable not set, should return true",
+			name: "config with notOnECS=false, environment variable not set, should return true",
 			config: map[string]string{
-				"not-on-ecs": "false",
+				"notOnECS": "false",
 			},
 			veleroForAck:   "",
 			expectedResult: true,
 		},
 		{
-			name: "config with not-on-ecs=yes, should check environment variable",
+			name: "config with notOnECS=yes, should check environment variable",
 			config: map[string]string{
-				"not-on-ecs": "yes",
+				"notOnECS": "yes",
 			},
 			veleroForAck:   "false",
 			expectedResult: false,
