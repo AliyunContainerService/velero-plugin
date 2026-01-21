@@ -91,7 +91,7 @@ func newObjectStore(logger logrus.FieldLogger) *ObjectStore {
 // cannot be initialized from the provided config.
 // Init init oss client with os envs
 func (o *ObjectStore) Init(config map[string]string) error {
-	if err := veleroplugin.ValidateObjectStoreConfigKeys(config, regionConfigKey, networkTypeConfigKey, endpointConfigKey); err != nil {
+	if err := veleroplugin.ValidateObjectStoreConfigKeys(config, validConfigKeys...); err != nil {
 		return errors.Wrapf(err, "failed to validate object store config keys")
 	}
 
@@ -104,8 +104,7 @@ func (o *ObjectStore) Init(config map[string]string) error {
 	o.endpoint = getOssEndpoint(region, config)
 	o.encryptionKeyID = os.Getenv("ALIBABA_CLOUD_ENCRYPTION_KEY_ID")
 
-	veleroForAck := os.Getenv("VELERO_FOR_ACK") == "true"
-	cred, err := getCredentials(veleroForAck)
+	cred, err := getCredentials(config)
 	if err != nil {
 		return errors.Wrapf(err, "failed to get credentials")
 	}

@@ -166,7 +166,7 @@ Velero 需要访问阿里云 OSS 和 ECS 服务的权限。您可以选择以下
 velero install \
     --provider alibabacloud \
     --image registry-cn-hangzhou.ack.aliyuncs.com/acs/velero:v1.17.1\
-    --plugins registry-cn-hangzhou.ack.aliyuncs.com/acs/velero-plugin-alibabacloud:v2.0.0-f857869 \
+    --plugins registry-cn-hangzhou.ack.aliyuncs.com/acs/velero-plugin-alibabacloud:v2.0.0-eaad098 \
     --bucket <YOUR_BUCKET> \
     --secret-file ./credentials-velero \
     --backup-location-config region=<REGION>,network=<NETWORK> \

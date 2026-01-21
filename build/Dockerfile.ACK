@@ -1,0 +1,17 @@
+FROM --platform=$BUILDPLATFORM registry-cn-hangzhou.ack.aliyuncs.com/dev/golang:1.25.5  as builder
+ARG TARGETPLATFORM
+ARG BUILDPLATFORM
+WORKDIR /go/src/gitlab.alibaba-inc.com/cos/velero-plugin
+
+COPY . .
+
+RUN env GOPROXY=https://goproxy.cn,direct GOARCH=$(echo $TARGETPLATFORM | cut -f2 -d '/') \
+    go build -o _output/velero-plugin-for-alibabacloud /go/src/gitlab.alibaba-inc.com/cos/velero-plugin/velero-plugin-alibabacloud
+
+FROM --platform=$TARGETPLATFORM registry-cn-hangzhou.ack.aliyuncs.com/dev/alpine:3.22-update
+
+RUN mkdir /plugins
+COPY --from=builder  /go/src/gitlab.alibaba-inc.com/cos/velero-plugin/_output/velero-plugin-for-alibabacloud /plugins/velero-plugin-for-alibabacloud
+RUN addgroup -S nonroot && adduser -u 65530 -S nonroot -G nonroot
+USER 65530
+ENTRYPOINT ["/bin/sh", "-c", "cp /plugins/* /target/."]

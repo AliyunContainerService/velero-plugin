@@ -166,7 +166,7 @@ Run the following command to install Velero and velero-plugin-for-alibabacloud i
 velero install \
     --provider alibabacloud \
     --image registry-cn-hangzhou.ack.aliyuncs.com/acs/velero:v1.17.1\
-    --plugins registry-cn-hangzhou.ack.aliyuncs.com/acs/velero-plugin-alibabacloud:v2.0.0-f857869 \
+    --plugins registry-cn-hangzhou.ack.aliyuncs.com/acs/velero-plugin-alibabacloud:v2.0.0-eaad098 \
     --bucket <YOUR_BUCKET> \
     --secret-file ./credentials-velero \
     --backup-location-config region=<REGION>,network=<NETWORK> \

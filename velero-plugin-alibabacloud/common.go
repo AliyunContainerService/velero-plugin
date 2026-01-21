@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/AliyunContainerService/ack-ram-tool/pkg/ecsmetadata"
@@ -14,11 +15,15 @@ import (
 
 var MetaClient = ecsmetadata.DefaultClient
 var MetaRegion string
+var MetaZone string
 
 const (
 	regionConfigKey      = "region"
+	zoneConfigKey        = "zone"
 	networkTypeConfigKey = "network"
 	endpointConfigKey    = "endpoint"
+	notOnECSConfigKey    = "notOnECS"
+	credFileConfigKey    = "credentialsFile"
 
 	networkTypeAccelerate = "accelerate"
 	networkTypeInternal   = "internal"
@@ -33,15 +38,32 @@ const (
 	TargetStr = "VolumeId"
 )
 
-// load environment vars from $ALIBABA_CLOUD_CREDENTIALS_FILE, if it exists
-func loadCredentialFileFromEnv() error {
-	envFile := os.Getenv("ALIBABA_CLOUD_CREDENTIALS_FILE")
-	if envFile == "" {
+var validConfigKeys = []string{
+	regionConfigKey,
+	zoneConfigKey,
+	networkTypeConfigKey,
+	endpointConfigKey,
+	notOnECSConfigKey,
+	credFileConfigKey,
+}
+
+// loadCredentialFileFromEnv loads environment variables from a credentials file.
+// The file path can be specified either via config["credentialsFile"] or the
+// ALIBABA_CLOUD_CREDENTIALS_FILE environment variable. Config takes precedence.
+func loadCredentialFileFromEnv(config map[string]string) error {
+	var filePath string
+	if config != nil && config[credFileConfigKey] != "" {
+		filePath = config[credFileConfigKey]
+	} else {
+		// Deprecated
+		filePath = os.Getenv("ALIBABA_CLOUD_CREDENTIALS_FILE")
+	}
+	if filePath == "" {
 		return nil
 	}
 
-	if err := godotenv.Overload(envFile); err != nil {
-		return errors.Wrapf(err, "error loading environment from ALIBABA_CLOUD_CREDENTIALS_FILE (%s)", envFile)
+	if err := godotenv.Overload(filePath); err != nil {
+		return errors.Wrapf(err, "error loading credientials file (%s)", filePath)
 	}
 
 	return nil
@@ -95,6 +117,27 @@ func getEcsRegionID(config map[string]string) string {
 	return region
 }
 
+// getEcsZoneID return ecs region id
+func getEcsZoneID(config map[string]string) string {
+	zone := config[zoneConfigKey]
+	if zone != "" {
+		return zone
+	}
+
+	if MetaZone != "" {
+		return MetaZone
+	}
+	zone, err := MetaClient.GetZoneId(context.Background())
+	if err != nil {
+		klog.Errorf("get MetaZone failed with error: %v", err)
+		return ""
+	}
+
+	klog.Infof("set MetaZone to %s", zone)
+	MetaZone = zone
+	return zone
+}
+
 // getRamRole return ramrole name
 func getRamRole() (string, error) {
 	return MetaClient.GetRoleName(context.Background())
@@ -122,6 +165,14 @@ type ossCredentials struct {
 	ramRole         string
 }
 
+func veleroForAck(config map[string]string) bool {
+	if config != nil && strings.ToLower(config[notOnECSConfigKey]) == "true" {
+		return false
+	}
+	// Deprecated
+	return !(strings.ToLower(os.Getenv("VELERO_FOR_ACK")) == "false")
+}
+
 // getCredentials retrieves OSS credentials based on the environment and configuration.
 // It supports multiple authentication methods with the following priority order:
 //
@@ -146,16 +197,18 @@ type ossCredentials struct {
 //   - For non-ACK environments: returns error if no AccessKey and no custom RAM role are provided
 //
 // Parameters:
-//   - veleroForAck: indicates if running in ACK (Alibaba Cloud Container Service) environment
+//   - config: configuration map that may contain:
+//   - "credentialsFile": path to credentials file (takes precedence over ALIBABA_CLOUD_CREDENTIALS_FILE env var)
+//   - "notOnECS": if set to "true", indicates not running on ECS (affects RAM role detection)
 //
 // Returns:
 //   - ossCredentials: contains accessKeyID, accessKeySecret, stsToken, and ramRole
 //   - error: if credentials cannot be obtained
-func getCredentials(veleroForAck bool) (*ossCredentials, error) {
+func getCredentials(config map[string]string) (*ossCredentials, error) {
 	cred := &ossCredentials{}
 
 	// Step 1: Load credentials from file if specified (this may set env vars)
-	if err := loadCredentialFileFromEnv(); err != nil {
+	if err := loadCredentialFileFromEnv(config); err != nil {
 		return nil, err
 	}
 
@@ -175,7 +228,7 @@ func getCredentials(veleroForAck bool) (*ossCredentials, error) {
 
 	// Step 4: Handle RAM role authentication
 	// If no AccessKey credentials are available, try to use RAM role
-	if !veleroForAck && cred.ramRole == "" {
+	if !veleroForAck(config) && cred.ramRole == "" {
 		// For non-ACK environment: if no AccessKey and no custom RAM role, return error
 		return nil, errors.Errorf("ALIBABA_CLOUD_ACCESS_KEY_ID or ALIBABA_CLOUD_ACCESS_KEY_SECRET environment variable is not set")
 	}
