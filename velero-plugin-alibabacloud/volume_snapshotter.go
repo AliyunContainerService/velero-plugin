@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 
 	openapi "github.com/alibabacloud-go/darabonba-openapi/v2/client"
@@ -37,7 +38,11 @@ import (
 
 const (
 	ackClusterNameKey      = "ACK_CLUSTER_NAME"
-	originalVolumeAZTagKey = "alibabacloud.velero-plugin/orginal-volume-az"
+	originalVolumeAZTagKey = "alibabacloud.velero-plugin_orginal-volume-az"
+	// legacyVolumeAZTagKey is the old tag key value used before the slash was replaced with underscore.
+	// Snapshots taken with plugin versions prior to this fix carry this key. We check both during
+	// restore so that existing snapshots are not silently placed in the wrong availability zone.
+	legacyVolumeAZTagKey = "alibabacloud.velero-plugin/orginal-volume-az"
 )
 
 // DiskPerformanceLevels maps performance levels to their max IOPS values
@@ -47,6 +52,32 @@ var DiskPerformanceLevels = map[string]int64{
 	"PL1": 50000,   // Up to 50,000 random read/write IOPS
 	"PL2": 100000,  // Up to 100,000 random read/write IOPS
 	"PL3": 1000000, // Up to 1,000,000 random read/write IOPS
+}
+
+// ecsTagKeyForbiddenPrefixes lists prefixes that Alibaba Cloud ECS rejects in tag keys.
+var ecsTagKeyForbiddenPrefixes = []string{"aliyun", "acs:", "http://", "https://"}
+
+// ecsTagKeyInvalidChars matches any character not allowed in an ECS tag key.
+// Allowed: letters, digits, underscore, hyphen, dot. Max length 128.
+var ecsTagKeyInvalidChars = regexp.MustCompile(`[^a-zA-Z0-9_\-\.]`)
+
+// sanitizeTagKey makes a tag key safe for Alibaba Cloud ECS by replacing invalid characters
+// with underscores and truncating to 128 characters. Keys starting with forbidden prefixes
+// or that are empty after sanitization are skipped (returns empty string).
+func sanitizeTagKey(key string) string {
+	for _, prefix := range ecsTagKeyForbiddenPrefixes {
+		if strings.HasPrefix(key, prefix) {
+			return ""
+		}
+	}
+	sanitized := ecsTagKeyInvalidChars.ReplaceAllString(key, "_")
+	if len(sanitized) > 128 {
+		sanitized = sanitized[:128]
+	}
+	if sanitized == "" {
+		return ""
+	}
+	return sanitized
 }
 
 // ecsClientInterface defines the interface for ECS client operations
@@ -448,10 +479,14 @@ func (b *VolumeSnapshotter) getTagsForCluster(snapshotTags []*ecs20140526.Descri
 	clusterName, haveACKClusterNameEnvVar := os.LookupEnv(ackClusterNameKey)
 
 	if haveACKClusterNameEnvVar {
-		result = append(result, &ecs20140526.CreateDiskRequestTag{
-			Key:   tea.String("kubernetes.io/cluster/" + clusterName),
-			Value: tea.String("owned"),
-		})
+		// "kubernetes.io/cluster/<name>" contains slashes — sanitize before sending to ECS
+		clusterTagKey := sanitizeTagKey("kubernetes.io/cluster/" + clusterName)
+		if clusterTagKey != "" {
+			result = append(result, &ecs20140526.CreateDiskRequestTag{
+				Key:   tea.String(clusterTagKey),
+				Value: tea.String("owned"),
+			})
+		}
 
 		result = append(result, &ecs20140526.CreateDiskRequestTag{
 			Key:   tea.String("KubernetesCluster"),
@@ -469,9 +504,12 @@ func (b *VolumeSnapshotter) getTagsForCluster(snapshotTags []*ecs20140526.Descri
 			// to overwrite the old ownership on volumes
 			continue
 		}
-
+		safeKey := sanitizeTagKey(tagKey)
+		if safeKey == "" {
+			continue
+		}
 		result = append(result, &ecs20140526.CreateDiskRequestTag{
-			Key:   tag.TagKey,
+			Key:   tea.String(safeKey),
 			Value: tag.TagValue,
 		})
 	}
@@ -483,10 +521,20 @@ func (b *VolumeSnapshotter) getTagsForCluster(snapshotTags []*ecs20140526.Descri
 func (b *VolumeSnapshotter) getTags(veleroTags map[string]string, volumeTags []*ecs20140526.DescribeDisksResponseBodyDisksDiskTagsTag) []*ecs20140526.CreateSnapshotRequestTag {
 	var result []*ecs20140526.CreateSnapshotRequestTag
 
+	// Track emitted sanitized keys to detect collisions after sanitization
+	// (e.g. "velero.io/backup" and "velero.io_backup" both become "velero.io_backup")
+	emittedKeys := make(map[string]bool)
+
 	// set Velero-assigned tags
 	for k, v := range veleroTags {
+		safeKey := sanitizeTagKey(k)
+		if safeKey == "" {
+			b.log.Warnf("skipping tag with key %q: invalid for Alibaba Cloud ECS", k)
+			continue
+		}
+		emittedKeys[safeKey] = true
 		result = append(result, &ecs20140526.CreateSnapshotRequestTag{
-			Key:   tea.String(k),
+			Key:   tea.String(safeKey),
 			Value: tea.String(v),
 		})
 	}
@@ -497,14 +545,18 @@ func (b *VolumeSnapshotter) getTags(veleroTags map[string]string, volumeTags []*
 			continue
 		}
 		tagKey := tea.StringValue(tag.TagKey)
-		// we want current Velero-assigned tags to overwrite any older versions
-		// of them that may exist due to prior snapshots/restores
-		if _, found := veleroTags[tagKey]; found {
+		safeKey := sanitizeTagKey(tagKey)
+		if safeKey == "" {
+			b.log.Warnf("skipping volume tag with key %q: invalid for Alibaba Cloud ECS", tagKey)
 			continue
 		}
-
+		// skip if a Velero tag already emitted this sanitized key
+		if emittedKeys[safeKey] {
+			continue
+		}
+		emittedKeys[safeKey] = true
 		result = append(result, &ecs20140526.CreateSnapshotRequestTag{
-			Key:   tag.TagKey,
+			Key:   tea.String(safeKey),
 			Value: tag.TagValue,
 		})
 	}
@@ -542,9 +594,15 @@ func (b *VolumeSnapshotter) getTagsWithVolumeZone(veleroTags map[string]string, 
 func (b *VolumeSnapshotter) determineVolumeAZ(snapshotTags []*ecs20140526.DescribeSnapshotsResponseBodySnapshotsSnapshotTagsTag) (string, error) {
 	var originalZone, currentZone string
 
-	// Try to get originalZone from snapshot tags (the zone where the original volume was created)
+	// Try to get originalZone from snapshot tags (the zone where the original volume was created).
+	// Check both the current key and the legacy key (which contained a slash, invalid for ECS tags)
+	// so that snapshots created before this fix can still be restored to the correct zone.
 	for _, tag := range snapshotTags {
-		if tag != nil && tea.StringValue(tag.TagKey) == originalVolumeAZTagKey {
+		if tag == nil {
+			continue
+		}
+		k := tea.StringValue(tag.TagKey)
+		if k == originalVolumeAZTagKey || k == legacyVolumeAZTagKey {
 			originalZone = tea.StringValue(tag.TagValue)
 			break
 		}

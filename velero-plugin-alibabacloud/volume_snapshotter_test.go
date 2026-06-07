@@ -15,6 +15,7 @@ package main
 
 import (
 	"sort"
+	"strings"
 	"testing"
 
 	ecs20140526 "github.com/alibabacloud-go/ecs-20140526/v4/client"
@@ -256,7 +257,8 @@ func TestGetTagsForCluster(t *testing.T) {
 			},
 			expected: []*ecs20140526.CreateDiskRequestTag{
 				{Key: tea.String("KubernetesCluster"), Value: tea.String("old-cluster")},
-				{Key: tea.String("kubernetes.io/cluster/old-cluster"), Value: tea.String("owned")},
+				// slash in original key gets sanitized to underscore
+				{Key: tea.String("kubernetes.io_cluster_old-cluster"), Value: tea.String("owned")},
 				{Key: tea.String("alibaba-cloud-key"), Value: tea.String("alibaba-cloud-val")},
 			},
 		},
@@ -266,7 +268,8 @@ func TestGetTagsForCluster(t *testing.T) {
 			snapshotTags: nil,
 			expected: []*ecs20140526.CreateDiskRequestTag{
 				{Key: tea.String("KubernetesCluster"), Value: tea.String("current-cluster")},
-				{Key: tea.String("kubernetes.io/cluster/current-cluster"), Value: tea.String("owned")},
+				// slash in "kubernetes.io/cluster/<name>" gets sanitized to underscore
+				{Key: tea.String("kubernetes.io_cluster_current-cluster"), Value: tea.String("owned")},
 			},
 		},
 		{
@@ -277,7 +280,7 @@ func TestGetTagsForCluster(t *testing.T) {
 			},
 			expected: []*ecs20140526.CreateDiskRequestTag{
 				{Key: tea.String("KubernetesCluster"), Value: tea.String("current-cluster")},
-				{Key: tea.String("kubernetes.io/cluster/current-cluster"), Value: tea.String("owned")},
+				{Key: tea.String("kubernetes.io_cluster_current-cluster"), Value: tea.String("owned")},
 				{Key: tea.String("alibaba-cloud-key"), Value: tea.String("alibaba-cloud-val")},
 			},
 		},
@@ -291,7 +294,7 @@ func TestGetTagsForCluster(t *testing.T) {
 			},
 			expected: []*ecs20140526.CreateDiskRequestTag{
 				{Key: tea.String("KubernetesCluster"), Value: tea.String("current-cluster")},
-				{Key: tea.String("kubernetes.io/cluster/current-cluster"), Value: tea.String("owned")},
+				{Key: tea.String("kubernetes.io_cluster_current-cluster"), Value: tea.String("owned")},
 				{Key: tea.String("alibaba-cloud-key"), Value: tea.String("alibaba-cloud-val")},
 			},
 		},
@@ -1327,6 +1330,77 @@ func TestDetermineVolumeAZ(t *testing.T) {
 
 			assert.NoError(t, err)
 			assert.Equal(t, test.expectedZone, zone)
+		})
+	}
+}
+
+func TestSanitizeTagKey(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "valid key unchanged",
+			input:    "valid-key_1.0",
+			expected: "valid-key_1.0",
+		},
+		{
+			name:     "velero.io/backup slash replaced",
+			input:    "velero.io/backup",
+			expected: "velero.io_backup",
+		},
+		{
+			name:     "velero.io/pv slash replaced",
+			input:    "velero.io/pv",
+			expected: "velero.io_pv",
+		},
+		{
+			name:     "kubernetes.io/created-for/pvc/name slashes replaced",
+			input:    "kubernetes.io/created-for/pvc/name",
+			expected: "kubernetes.io_created-for_pvc_name",
+		},
+		{
+			name:     "forbidden prefix aliyun",
+			input:    "aliyunSomeKey",
+			expected: "",
+		},
+		{
+			name:     "forbidden prefix acs:",
+			input:    "acs:SomeKey",
+			expected: "",
+		},
+		{
+			name:     "forbidden prefix http://",
+			input:    "http://example.com",
+			expected: "",
+		},
+		{
+			name:     "forbidden prefix https://",
+			input:    "https://example.com",
+			expected: "",
+		},
+		{
+			name:     "key truncated to 128 chars",
+			input:    strings.Repeat("a", 200),
+			expected: strings.Repeat("a", 128),
+		},
+		{
+			name:     "empty key returns empty",
+			input:    "",
+			expected: "",
+		},
+		{
+			name:     "colon replaced with underscore",
+			input:    "some:key",
+			expected: "some_key",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := sanitizeTagKey(test.input)
+			assert.Equal(t, test.expected, result)
 		})
 	}
 }

@@ -257,7 +257,7 @@ ALIBABA_CLOUD_ACCESS_STS_TOKEN=config-file-token
 			expectedError: "Failed to get sts token from ram role CustomVeleroRole",
 		},
 		{
-			name:   "success: custom RAM role takes precedence over AccessKey",
+			name:   "success: AccessKey takes precedence over custom RAM role",
 			config: nil,
 			setupEnv: func(t *testing.T) map[string]string {
 				t.Setenv("ALIBABA_CLOUD_CREDENTIALS_FILE", "")
@@ -289,6 +289,9 @@ ALIBABA_CLOUD_ACCESS_STS_TOKEN=config-file-token
 				require.NoError(t, err)
 
 				t.Setenv("ALIBABA_CLOUD_CREDENTIALS_FILE", credFile)
+				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_ID", "")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_STS_TOKEN", "")
 				// Cleanup after test
 				t.Cleanup(func() {
 					os.RemoveAll(tmpDir)
@@ -298,6 +301,80 @@ ALIBABA_CLOUD_ACCESS_STS_TOKEN=config-file-token
 			// This will fail because getSTSAK requires real ECS metadata service,
 			// but it verifies that the custom RAM role from file is used
 			expectedError: "Failed to get sts token from ram role FileCustomRole",
+		},
+		{
+			name: "success: per-location accessKeyId+accessKeySecret in config (no env vars needed)",
+			config: map[string]string{
+				"notOnECS":             "true",
+				accessKeyIDConfigKey:     "inline-ak",
+				accessKeySecretConfigKey: "inline-sk",
+			},
+			setupEnv: func(t *testing.T) map[string]string {
+				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_ID", "")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_STS_TOKEN", "")
+				return nil
+			},
+			validateCred: func(t *testing.T, cred *ossCredentials) {
+				assert.Equal(t, "inline-ak", cred.accessKeyID)
+				assert.Equal(t, "inline-sk", cred.accessKeySecret)
+				assert.Empty(t, cred.stsToken)
+				assert.Empty(t, cred.ramRole)
+			},
+		},
+		{
+			name: "success: per-location credentials with optional stsToken",
+			config: map[string]string{
+				"notOnECS":             "true",
+				accessKeyIDConfigKey:     "inline-ak",
+				accessKeySecretConfigKey: "inline-sk",
+				stsTokenConfigKey:        "inline-sts",
+			},
+			setupEnv: func(t *testing.T) map[string]string {
+				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_ID", "")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_STS_TOKEN", "")
+				return nil
+			},
+			validateCred: func(t *testing.T, cred *ossCredentials) {
+				assert.Equal(t, "inline-ak", cred.accessKeyID)
+				assert.Equal(t, "inline-sk", cred.accessKeySecret)
+				assert.Equal(t, "inline-sts", cred.stsToken)
+				assert.Empty(t, cred.ramRole)
+			},
+		},
+		{
+			name: "success: per-location credentials take priority over env vars",
+			config: map[string]string{
+				accessKeyIDConfigKey:     "inline-ak",
+				accessKeySecretConfigKey: "inline-sk",
+			},
+			setupEnv: func(t *testing.T) map[string]string {
+				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_ID", "env-ak")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "env-sk")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_STS_TOKEN", "")
+				return nil
+			},
+			validateCred: func(t *testing.T, cred *ossCredentials) {
+				assert.Equal(t, "inline-ak", cred.accessKeyID, "per-location config must win over env vars")
+				assert.Equal(t, "inline-sk", cred.accessKeySecret)
+				assert.Empty(t, cred.ramRole)
+			},
+		},
+		{
+			name: "fallback: only accessKeyId without accessKeySecret falls through to env vars",
+			config: map[string]string{
+				"notOnECS":         "true",
+				accessKeyIDConfigKey: "inline-ak-only",
+			},
+			setupEnv: func(t *testing.T) map[string]string {
+				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_ID", "")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_STS_TOKEN", "")
+				t.Setenv("ALIBABA_CLOUD_RAM_ROLE", "")
+				return nil
+			},
+			expectedError: "ALIBABA_CLOUD_ACCESS_KEY_ID or ALIBABA_CLOUD_ACCESS_KEY_SECRET environment variable is not set",
 		},
 	}
 
