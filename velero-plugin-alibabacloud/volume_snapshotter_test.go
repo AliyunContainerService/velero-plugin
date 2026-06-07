@@ -432,6 +432,45 @@ func TestGetTags(t *testing.T) {
 			},
 		},
 		{
+			name: "system-reserved tag prefixes (acs: and aliyun) are filtered out",
+			veleroTags: map[string]string{"velero-key": "velero-val"},
+			volumeTags: []*ecs20140526.DescribeDisksResponseBodyDisksDiskTagsTag{
+				{TagKey: tea.String("acs:ecs:somefield"), TagValue: tea.String("sys-val1")},
+				{TagKey: tea.String("aliyun-tag"), TagValue: tea.String("sys-val2")},
+				{TagKey: tea.String("user-key"), TagValue: tea.String("user-val")},
+			},
+			expected: []*ecs20140526.CreateSnapshotRequestTag{
+				{Key: tea.String("velero-key"), Value: tea.String("velero-val")},
+				{Key: tea.String("user-key"), Value: tea.String("user-val")},
+			},
+		},
+		{
+			name: "tags with http:// or https:// in key or value are filtered out",
+			veleroTags: map[string]string{"velero-key": "velero-val"},
+			volumeTags: []*ecs20140526.DescribeDisksResponseBodyDisksDiskTagsTag{
+				{TagKey: tea.String("http://bad-key"), TagValue: tea.String("val1")},
+				{TagKey: tea.String("good-key"), TagValue: tea.String("https://bad-val")},
+				{TagKey: tea.String("ok-key"), TagValue: tea.String("ok-val")},
+			},
+			expected: []*ecs20140526.CreateSnapshotRequestTag{
+				{Key: tea.String("velero-key"), Value: tea.String("velero-val")},
+				{Key: tea.String("ok-key"), Value: tea.String("ok-val")},
+			},
+		},
+		{
+			name: "tags with reserved prefix in value are filtered out",
+			veleroTags: map[string]string{"velero-key": "velero-val"},
+			volumeTags: []*ecs20140526.DescribeDisksResponseBodyDisksDiskTagsTag{
+				{TagKey: tea.String("key1"), TagValue: tea.String("acs:something")},
+				{TagKey: tea.String("key2"), TagValue: tea.String("aliyun-internal")},
+				{TagKey: tea.String("key3"), TagValue: tea.String("normal-val")},
+			},
+			expected: []*ecs20140526.CreateSnapshotRequestTag{
+				{Key: tea.String("velero-key"), Value: tea.String("velero-val")},
+				{Key: tea.String("key3"), Value: tea.String("normal-val")},
+			},
+		},
+		{
 			name: "when tags overlap, velero tags take precedence",
 			veleroTags: map[string]string{
 				"velero-key":      "velero-val",

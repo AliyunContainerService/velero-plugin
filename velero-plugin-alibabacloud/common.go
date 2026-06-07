@@ -36,6 +36,13 @@ const (
 	// Constants for volume ID conversion
 	OriginStr = "volumeId"
 	TargetStr = "VolumeId"
+
+	// Reserved tag prefixes and forbidden substrings per Alibaba Cloud ECS API.
+	// Tags with keys or values matching these are rejected in write operations.
+	systemTagPrefixACS    = "acs:"
+	systemTagPrefixAliyun = "aliyun"
+	forbiddenHTTP         = "http://"
+	forbiddenHTTPS        = "https://"
 )
 
 var validConfigKeys = []string{

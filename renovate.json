@@ -1,0 +1,45 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":semanticCommits",
+    ":dependencyDashboard"
+  ],
+  "labels": ["dependencies"],
+  "schedule": ["before 9am on monday"],
+  "prConcurrentLimit": 5,
+  "postUpdateOptions": ["gomodTidy"],
+  "packageRules": [
+    {
+      "matchManagers": ["gomod"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "go minor/patch deps"
+    },
+    {
+      "matchPackageNames": ["github.com/vmware-tanzu/velero"],
+      "groupName": "velero"
+    },
+    {
+      "matchPackagePrefixes": [
+        "github.com/aliyun/",
+        "github.com/alibabacloud-go/",
+        "github.com/AliyunContainerService/"
+      ],
+      "groupName": "alibabacloud sdks"
+    },
+    {
+      "matchPackagePrefixes": ["k8s.io/"],
+      "groupName": "kubernetes",
+      "matchUpdateTypes": ["minor", "patch"]
+    },
+    {
+      "matchManagers": ["dockerfile"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
+    }
+  ],
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "labels": ["security"]
+  }
+}
