@@ -233,7 +233,7 @@ func TestSetVolumeIDNoZone(t *testing.T) {
 	assert.Equal(t, "vol-updated", diskID)
 }
 
-func TestGetTagsForCluster(t *testing.T) {
+func TestRestoreDiskTags(t *testing.T) {
 	tests := []struct {
 		name         string
 		isNameSet    bool
@@ -303,7 +303,7 @@ func TestGetTagsForCluster(t *testing.T) {
 			if test.isNameSet {
 				t.Setenv(ackClusterNameKey, "current-cluster")
 			}
-			res := b.getTagsForCluster(test.snapshotTags)
+			res := b.restoreDiskTags(test.snapshotTags)
 
 			sort.Slice(res, func(i, j int) bool {
 				return tea.StringValue(res[i].Key) < tea.StringValue(res[j].Key)
@@ -383,7 +383,7 @@ func TestGetPerformanceLevelFromIOPS(t *testing.T) {
 	}
 }
 
-func TestGetTags(t *testing.T) {
+func TestSnapshotTags(t *testing.T) {
 	tests := []struct {
 		name       string
 		veleroTags map[string]string
@@ -452,7 +452,7 @@ func TestGetTags(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			b := newVolumeSnapshotter(newTestLogger())
-			res := b.getTags(test.veleroTags, test.volumeTags)
+			res := b.snapshotTags(test.veleroTags, test.volumeTags, "")
 
 			sort.Slice(res, func(i, j int) bool {
 				return tea.StringValue(res[i].Key) < tea.StringValue(res[j].Key)
@@ -1026,7 +1026,7 @@ func TestDescribeVolume(t *testing.T) {
 	}
 }
 
-// TestGetTagsWithVolumeZone tests the getTagsWithVolumeZone function
+// TestGetTagsWithVolumeZone tests the snapshotTags function
 func TestGetTagsWithVolumeZone(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -1085,7 +1085,7 @@ func TestGetTagsWithVolumeZone(t *testing.T) {
 				log: newTestLogger(),
 			}
 
-			result := b.getTagsWithVolumeZone(test.veleroTags, test.volumeTags, test.volumeZoneID)
+			result := b.snapshotTags(test.veleroTags, test.volumeTags, test.volumeZoneID)
 
 			assert.Equal(t, test.expectedCount, len(result))
 
@@ -1329,4 +1329,71 @@ func TestDetermineVolumeAZ(t *testing.T) {
 			assert.Equal(t, test.expectedZone, zone)
 		})
 	}
+}
+
+func TestIsInvalidTagKey(t *testing.T) {
+	tests := []struct {
+		key      string
+		expected bool
+	}{
+		{"acs:ecs:createdBy", true},
+		{"ACS:something", true},
+		{"Acs:Tag", true},
+		{"acs:", true},
+		{"kubernetes.io/cluster/my-cluster", false},
+		{"velero.io/backup", false},
+		{"", false},
+		{"acs-something", false},
+		{"aliyun-tag", false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.key, func(t *testing.T) {
+			assert.Equal(t, test.expected, isInvalidTagKey(test.key))
+		})
+	}
+}
+
+func TestSnapshotTagsFiltersInvalidKeys(t *testing.T) {
+	b := newVolumeSnapshotter(newTestLogger())
+
+	veleroTags := map[string]string{
+		"velero-key": "velero-val",
+	}
+	volumeTags := []*ecs20140526.DescribeDisksResponseBodyDisksDiskTagsTag{
+		{TagKey: tea.String("normal-key"), TagValue: tea.String("normal-val")},
+		{TagKey: tea.String("acs:ecs:createdBy"), TagValue: tea.String("system-val")},
+		{TagKey: tea.String("acs:rm:rgId"), TagValue: tea.String("system-val2")},
+	}
+
+	res := b.snapshotTags(veleroTags, volumeTags, "")
+
+	// Should only have velero-key and normal-key, not the acs: prefixed tags
+	assert.Equal(t, 2, len(res))
+
+	keys := make(map[string]string)
+	for _, tag := range res {
+		keys[tea.StringValue(tag.Key)] = tea.StringValue(tag.Value)
+	}
+	assert.Equal(t, "velero-val", keys["velero-key"])
+	assert.Equal(t, "normal-val", keys["normal-key"])
+	assert.Empty(t, keys["acs:ecs:createdBy"])
+	assert.Empty(t, keys["acs:rm:rgId"])
+}
+
+func TestRestoreDiskTagsFiltersInvalidKeys(t *testing.T) {
+	b := newVolumeSnapshotter(newTestLogger())
+
+	snapshotTags := []*ecs20140526.DescribeSnapshotsResponseBodySnapshotsSnapshotTagsTag{
+		{TagKey: tea.String("normal-key"), TagValue: tea.String("normal-val")},
+		{TagKey: tea.String("acs:ecs:createdBy"), TagValue: tea.String("system-val")},
+		{TagKey: tea.String("acs:rm:rgId"), TagValue: tea.String("system-val2")},
+	}
+
+	res := b.restoreDiskTags(snapshotTags)
+
+	// Should only have normal-key, not the acs: prefixed tags
+	assert.Equal(t, 1, len(res))
+	assert.Equal(t, "normal-key", tea.StringValue(res[0].Key))
+	assert.Equal(t, "normal-val", tea.StringValue(res[0].Value))
 }
