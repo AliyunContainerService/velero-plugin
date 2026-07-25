@@ -25,6 +25,17 @@ const (
 	notOnECSConfigKey    = "notOnECS"
 	credFileConfigKey    = "credentialsFile"
 
+	// Optional config keys for per-BSL/VSL credentials.
+	// Velero v1.10+ supports spec.credential on BSL/VSL objects, which references a
+	// Kubernetes Secret. Velero mounts the secret and injects credentialsFile into the
+	// plugin config. These keys are the alternative path for passing credentials directly
+	// via the BSL/VSL config map (lower precedence than credentialsFile/env vars from
+	// a mounted secret). When both accessKeyId and accessKeySecret are present, they
+	// take highest priority over all other credential sources for that location.
+	accessKeyIDConfigKey     = "accessKeyId"
+	accessKeySecretConfigKey = "accessKeySecret"
+	stsTokenConfigKey        = "stsToken"
+
 	networkTypeAccelerate = "accelerate"
 	networkTypeInternal   = "internal"
 
@@ -45,6 +56,9 @@ var validConfigKeys = []string{
 	endpointConfigKey,
 	notOnECSConfigKey,
 	credFileConfigKey,
+	accessKeyIDConfigKey,
+	accessKeySecretConfigKey,
+	stsTokenConfigKey,
 }
 
 // loadCredentialFileFromEnv loads environment variables from a credentials file.
@@ -174,59 +188,76 @@ func veleroForAck(config map[string]string) bool {
 }
 
 // getCredentials retrieves OSS credentials based on the environment and configuration.
-// It supports multiple authentication methods with the following priority order:
+// It supports two usage patterns:
 //
-// 1. AccessKey credentials (highest priority):
-//   - Load from file (if ALIBABA_CLOUD_CREDENTIALS_FILE is set) and/or environment variables
-//   - Environment variables: ALIBABA_CLOUD_ACCESS_KEY_ID, ALIBABA_CLOUD_ACCESS_KEY_SECRET
-//   - Optional: ALIBABA_CLOUD_ACCESS_STS_TOKEN
-//   - If both AccessKey ID and Secret are provided, they take precedence over RAM role
+// Pattern 1 — Shared credential (existing approach, recommended for most cases):
+//   - A single Kubernetes Secret is referenced by the Velero installation (e.g. --secret-file).
+//   - Both BSL and VSL use the same credential source.
+//   - Credential resolution order: credentialsFile config key → ALIBABA_CLOUD_CREDENTIALS_FILE
+//     env var → ALIBABA_CLOUD_ACCESS_KEY_ID/SECRET env vars → ALIBABA_CLOUD_RAM_ROLE env var
+//     → ECS instance RAM role (ACK only).
 //
-// 2. Custom RAM Role (via environment variable):
-//   - Environment variable: ALIBABA_CLOUD_RAM_ROLE
-//   - Allows specifying a custom RAM role name instead of using the ECS instance's default role
-//   - Works in both ACK and non-ACK environments
-//   - The function will use this role to obtain STS credentials via getSTSAK()
+// Pattern 2 — Per-location credential via Kubernetes Secret (new approach):
+//   - Each BSL/VSL has its own spec.credential field referencing a separate Kubernetes Secret.
+//   - Velero v1.10+ mounts the secret and injects credentialsFile=/tmp/... into plugin config.
+//   - The plugin reads the file via loadCredentialFileFromEnv (step 2 below).
+//   - This allows BSL and VSL to use different credentials (e.g. different RAM users).
 //
-// 3. ECS Instance RAM Role (ACK environment fallback):
-//   - For ACK environments: automatically detect the RAM role from ECS metadata
-//   - Only used if no AccessKey credentials and no custom RAM role are provided
-//   - Requires the ECS instance to have a RAM role attached
+// Full credential resolution priority order within this function:
 //
-// 4. Error (non-ACK environment without credentials):
-//   - For non-ACK environments: returns error if no AccessKey and no custom RAM role are provided
+// 1. Per-location config keys (accessKeyId + accessKeySecret in BSL/VSL config map):
+//   - When both are present, they are used directly as the highest-priority fallback.
+//   - Note: the recommended per-location approach is Pattern 2 above (spec.credential).
+//     These config keys are an alternative when a Kubernetes Secret is not available.
 //
-// Parameters:
-//   - config: configuration map that may contain:
-//   - "credentialsFile": path to credentials file (takes precedence over ALIBABA_CLOUD_CREDENTIALS_FILE env var)
-//   - "notOnECS": if set to "true", indicates not running on ECS (affects RAM role detection)
+// 2. Credentials file (Pattern 2 — spec.credential path lands here):
+//   - Config key: credentialsFile (takes precedence over ALIBABA_CLOUD_CREDENTIALS_FILE env var)
+//   - File format: dotenv key=value pairs (ALIBABA_CLOUD_ACCESS_KEY_ID, etc.)
 //
-// Returns:
-//   - ossCredentials: contains accessKeyID, accessKeySecret, stsToken, and ramRole
-//   - error: if credentials cannot be obtained
+// 3. AccessKey credentials from environment variables:
+//   - ALIBABA_CLOUD_ACCESS_KEY_ID, ALIBABA_CLOUD_ACCESS_KEY_SECRET (required)
+//   - ALIBABA_CLOUD_ACCESS_STS_TOKEN (optional)
+//
+// 4. Custom RAM Role (via environment variable):
+//   - ALIBABA_CLOUD_RAM_ROLE — custom RAM role name
+//
+// 5. ECS Instance RAM Role (ACK environment fallback):
+//   - Automatically detected from ECS metadata service
+//
+// 6. Error (non-ACK environment without any credentials)
 func getCredentials(config map[string]string) (*ossCredentials, error) {
 	cred := &ossCredentials{}
 
-	// Step 1: Load credentials from file if specified (this may set env vars)
+	// Step 1: Per-location config keys (highest priority).
+	// If accessKeyId and accessKeySecret are both present in the BSL/VSL config map,
+	// use them directly — credentialsFile and env vars are not consulted for this location.
+	if config != nil && config[accessKeyIDConfigKey] != "" && config[accessKeySecretConfigKey] != "" {
+		cred.accessKeyID = config[accessKeyIDConfigKey]
+		cred.accessKeySecret = config[accessKeySecretConfigKey]
+		cred.stsToken = config[stsTokenConfigKey] // optional
+		return cred, nil
+	}
+
+	// Step 2: Load credentials from file if specified (this may set env vars)
 	if err := loadCredentialFileFromEnv(config); err != nil {
 		return nil, err
 	}
 
-	// Step 2: Get credentials from environment variables
+	// Step 3: Get credentials from environment variables
 	// These may be set by loadCredentialFileFromEnv or directly by the user
 	cred.accessKeyID = os.Getenv("ALIBABA_CLOUD_ACCESS_KEY_ID")
 	cred.accessKeySecret = os.Getenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET")
 	cred.stsToken = os.Getenv("ALIBABA_CLOUD_ACCESS_STS_TOKEN") // Token may be empty
 	cred.ramRole = os.Getenv("ALIBABA_CLOUD_RAM_ROLE")          // Custom RAM role name
 
-	// Step 3: If we have both accessKeyID and accessKeySecret, use them directly
+	// Step 4: If we have both accessKeyID and accessKeySecret, use them directly
 	// AccessKey credentials take precedence over RAM role
 	if len(cred.accessKeyID) != 0 && len(cred.accessKeySecret) != 0 {
 		cred.ramRole = ""
 		return cred, nil
 	}
 
-	// Step 4: Handle RAM role authentication
+	// Step 5: Handle RAM role authentication
 	// If no AccessKey credentials are available, try to use RAM role
 	if !veleroForAck(config) && cred.ramRole == "" {
 		// For non-ACK environment: if no AccessKey and no custom RAM role, return error
@@ -244,7 +275,7 @@ func getCredentials(config map[string]string) (*ossCredentials, error) {
 		cred.ramRole = ramRole
 	}
 
-	// Step 5: Get STS credentials from the RAM role
+	// Step 6: Get STS credentials from the RAM role
 	var err error
 	cred.accessKeyID, cred.accessKeySecret, cred.stsToken, err = getSTSAK(cred.ramRole)
 	if err != nil {

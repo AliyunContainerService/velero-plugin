@@ -178,17 +178,48 @@ velero install \
 
 #### Backup Storage Location Configuration Parameters
 
+#### Backup Storage Location Configuration Parameters
+
 | Parameter | Type | Description | Example |
 |:-----|:-----|:-----|:-----|
 | `region` | Required | The region where the OSS bucket is located | `cn-hangzhou` |
 | `network` | Optional | Network type. Options: `internal` (internal network), `accelerate` (accelerate domain). Default is public network | `internal` |
 | `endpoint` | Optional | Custom OSS endpoint | `https://oss-custom.example.com` |
+| `accessKeyId` | Optional | Alibaba Cloud Access Key ID. Alternative to `spec.credential`; takes priority over env vars when combined with `accessKeySecret` | `LTAI5t...` |
+| `accessKeySecret` | Optional | Alibaba Cloud Access Key Secret. Required when `accessKeyId` is set | `xxxxx` |
+| `stsToken` | Optional | STS security token (only needed when using temporary credentials) | `xxxxx` |
 
 #### Volume Snapshot Location Configuration Parameters
 
 | Parameter | Type | Description | Example |
 |:-----|:-----|:-----|:-----|
 | `region` | Required | The region where ECS snapshots are located | `cn-hangzhou` |
+| `accessKeyId` | Optional | Alibaba Cloud Access Key ID. Alternative to `spec.credential`; takes priority over env vars when combined with `accessKeySecret` | `LTAI5t...` |
+| `accessKeySecret` | Optional | Alibaba Cloud Access Key Secret. Required when `accessKeyId` is set | `xxxxx` |
+| `stsToken` | Optional | STS security token (only needed when using temporary credentials) | `xxxxx` |
+
+> **Credential patterns:**
+>
+> **Pattern 1 — Shared credential (recommended for most cases):**
+> A single Kubernetes Secret is used for both BSL and VSL. Pass it to Velero via
+> `--secret-file` at install time, or reference it with `spec.credential` on the BSL/VSL.
+> Velero mounts the secret and injects `credentialsFile` into the plugin config automatically.
+>
+> **Pattern 2 — Per-location credentials via Kubernetes Secret (recommended when BSL and VSL need different credentials):**
+> Set `spec.credential` on each BSL/VSL object to reference a separate Kubernetes Secret.
+> Velero v1.10+ mounts each secret independently and injects `credentialsFile` per location.
+> This is the same approach used by the AWS plugin.
+>
+> **Credential resolution priority order:**
+> 1. `credentialsFile` config key (set automatically by Velero when `spec.credential` is used) — highest priority
+> 2. `ALIBABA_CLOUD_CREDENTIALS_FILE` environment variable
+> 3. `ALIBABA_CLOUD_ACCESS_KEY_ID` / `ALIBABA_CLOUD_ACCESS_KEY_SECRET` environment variables
+> 4. `ALIBABA_CLOUD_RAM_ROLE` environment variable (custom RAM role)
+> 5. ECS instance RAM role (ACK environments only)
+>
+> The `accessKeyId`/`accessKeySecret` config keys in the tables above are an alternative
+> when neither a Kubernetes Secret nor environment variables are available. They store
+> credentials directly in the BSL/VSL config object.
 
 #### Other common Optional Parameters
 
