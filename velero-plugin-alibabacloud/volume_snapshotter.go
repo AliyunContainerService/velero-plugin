@@ -196,7 +196,7 @@ func (b *VolumeSnapshotter) CreateVolumeFromSnapshot(snapshotID, volumeType, vol
 		return "", errors.Wrapf(err, "failed to describe snapshot %s", snapshotID)
 	}
 
-	tags := b.getTagsForCluster(snapInfo.Tags.Tag)
+	tags := b.restoreDiskTags(snapInfo.Tags.Tag)
 
 	// Use volumeAZ from parameter if provided, otherwise determine from snapshot tags or metadata
 	if volumeAZ == "" {
@@ -324,7 +324,7 @@ func (b *VolumeSnapshotter) CreateSnapshot(volumeID, volumeAZ string, tags map[s
 		volumeZoneID = tea.StringValue(volumeInfo.ZoneId)
 	}
 
-	newTags := b.getTagsWithVolumeZone(tags, volumeInfo.Tags.Tag, volumeZoneID)
+	newTags := b.snapshotTags(tags, volumeInfo.Tags.Tag, volumeZoneID)
 	if len(newTags) > 0 {
 		req.Tag = newTags
 	}
@@ -472,60 +472,85 @@ func (b *VolumeSnapshotter) describeVolume(volumeID string, volumeAZ string) (*e
 	return res.Body.Disks.Disk[0], nil
 }
 
-// getTagsForCluster processes snapshot tags and adds cluster-specific tags for restored volumes
-func (b *VolumeSnapshotter) getTagsForCluster(snapshotTags []*ecs20140526.DescribeSnapshotsResponseBodySnapshotsSnapshotTagsTag) []*ecs20140526.CreateDiskRequestTag {
+// tagKV is an intermediate representation for tag key-value pairs,
+// decoupled from SDK-specific tag types.
+type tagKV struct {
+	key   string
+	value string
+}
+
+// copyTags filters source tags, sanitizing keys (replacing invalid chars, dropping forbidden
+// prefixes) and skipping any key for which skipKey returns true.
+func copyTags(keys []*string, values []*string, skipKey func(string) bool) []tagKV {
+	var result []tagKV
+	for i := range keys {
+		if keys[i] == nil {
+			continue
+		}
+		k := sanitizeTagKey(tea.StringValue(keys[i]))
+		if k == "" || skipKey(k) {
+			continue
+		}
+		v := ""
+		if values[i] != nil {
+			v = tea.StringValue(values[i])
+		}
+		result = append(result, tagKV{key: k, value: v})
+	}
+	return result
+}
+
+// restoreDiskTags builds tags for CreateDisk when restoring a volume from snapshot.
+// It adds current cluster ownership tags and copies snapshot tags, skipping old cluster tags.
+func (b *VolumeSnapshotter) restoreDiskTags(snapshotTags []*ecs20140526.DescribeSnapshotsResponseBodySnapshotsSnapshotTagsTag) []*ecs20140526.CreateDiskRequestTag {
 	var result []*ecs20140526.CreateDiskRequestTag
 
-	clusterName, haveACKClusterNameEnvVar := os.LookupEnv(ackClusterNameKey)
+	clusterName, haveClusterName := os.LookupEnv(ackClusterNameKey)
 
-	if haveACKClusterNameEnvVar {
-		// "kubernetes.io/cluster/<name>" contains slashes — sanitize before sending to ECS
-		clusterTagKey := sanitizeTagKey("kubernetes.io/cluster/" + clusterName)
-		if clusterTagKey != "" {
-			result = append(result, &ecs20140526.CreateDiskRequestTag{
-				Key:   tea.String(clusterTagKey),
-				Value: tea.String("owned"),
-			})
-		}
-
+	if haveClusterName {
+		result = append(result, &ecs20140526.CreateDiskRequestTag{
+			Key:   tea.String(sanitizeTagKey("kubernetes.io/cluster/" + clusterName)),
+			Value: tea.String("owned"),
+		})
 		result = append(result, &ecs20140526.CreateDiskRequestTag{
 			Key:   tea.String("KubernetesCluster"),
 			Value: tea.String(clusterName),
 		})
 	}
 
-	for _, tag := range snapshotTags {
-		if tag == nil {
-			continue
+	// Extract keys and values from snapshot tags
+	keys := make([]*string, len(snapshotTags))
+	values := make([]*string, len(snapshotTags))
+	for i, tag := range snapshotTags {
+		if tag != nil {
+			keys[i] = tag.TagKey
+			values[i] = tag.TagValue
 		}
-		tagKey := tea.StringValue(tag.TagKey)
-		if haveACKClusterNameEnvVar && (strings.HasPrefix(tagKey, "kubernetes.io/cluster/") || tagKey == "KubernetesCluster") {
-			// if the ACK_CLUSTER_NAME variable is found we want current cluster
-			// to overwrite the old ownership on volumes
-			continue
-		}
-		safeKey := sanitizeTagKey(tagKey)
-		if safeKey == "" {
-			continue
-		}
+	}
+
+	copied := copyTags(keys, values, func(k string) bool {
+		// Skip old cluster ownership tags when we have a new cluster name
+		return haveClusterName && (strings.HasPrefix(k, "kubernetes.io_cluster_") || k == "KubernetesCluster")
+	})
+
+	for _, t := range copied {
 		result = append(result, &ecs20140526.CreateDiskRequestTag{
-			Key:   tea.String(safeKey),
-			Value: tag.TagValue,
+			Key:   tea.String(t.key),
+			Value: tea.String(t.value),
 		})
 	}
 
 	return result
 }
 
-// getTags processes Velero tags and volume tags to create snapshot tags
-func (b *VolumeSnapshotter) getTags(veleroTags map[string]string, volumeTags []*ecs20140526.DescribeDisksResponseBodyDisksDiskTagsTag) []*ecs20140526.CreateSnapshotRequestTag {
+// snapshotTags builds tags for CreateSnapshot when backing up a volume.
+// It starts with Velero-assigned tags, then copies volume tags (Velero tags take precedence on conflict),
+// and appends the original volume AZ tag if not already present.
+func (b *VolumeSnapshotter) snapshotTags(veleroTags map[string]string, volumeTags []*ecs20140526.DescribeDisksResponseBodyDisksDiskTagsTag, volumeZoneID string) []*ecs20140526.CreateSnapshotRequestTag {
 	var result []*ecs20140526.CreateSnapshotRequestTag
 
-	// Track emitted sanitized keys to detect collisions after sanitization
-	// (e.g. "velero.io/backup" and "velero.io_backup" both become "velero.io_backup")
+	// Velero-assigned tags first (highest priority)
 	emittedKeys := make(map[string]bool)
-
-	// set Velero-assigned tags
 	for k, v := range veleroTags {
 		safeKey := sanitizeTagKey(k)
 		if safeKey == "" {
@@ -539,51 +564,43 @@ func (b *VolumeSnapshotter) getTags(veleroTags map[string]string, volumeTags []*
 		})
 	}
 
-	// copy tags from volume to snapshot
-	for _, tag := range volumeTags {
-		if tag == nil {
-			continue
-		}
-		tagKey := tea.StringValue(tag.TagKey)
-		safeKey := sanitizeTagKey(tagKey)
-		if safeKey == "" {
-			b.log.Warnf("skipping volume tag with key %q: invalid for Alibaba Cloud ECS", tagKey)
-			continue
-		}
-		// skip if a Velero tag already emitted this sanitized key
-		if emittedKeys[safeKey] {
-			continue
-		}
-		emittedKeys[safeKey] = true
-		result = append(result, &ecs20140526.CreateSnapshotRequestTag{
-			Key:   tea.String(safeKey),
-			Value: tag.TagValue,
-		})
-	}
-
-	return result
-}
-
-// getTagsWithVolumeZone processes Velero tags and volume tags to create snapshot tags,
-// and adds original volume AZ tag if not present
-func (b *VolumeSnapshotter) getTagsWithVolumeZone(veleroTags map[string]string, volumeTags []*ecs20140526.DescribeDisksResponseBodyDisksDiskTagsTag, volumeZoneID string) []*ecs20140526.CreateSnapshotRequestTag {
-	result := b.getTags(veleroTags, volumeTags)
-
-	// Check if original volume AZ tag already exists in result
-	hasOriginalVolumeAZTag := false
-	for _, tag := range result {
-		if tag != nil && tea.StringValue(tag.Key) == originalVolumeAZTagKey {
-			hasOriginalVolumeAZTag = true
-			break
+	// Extract keys and values from volume tags
+	keys := make([]*string, len(volumeTags))
+	values := make([]*string, len(volumeTags))
+	for i, tag := range volumeTags {
+		if tag != nil {
+			keys[i] = tag.TagKey
+			values[i] = tag.TagValue
 		}
 	}
 
-	// If not present and volumeZoneID is available, add it
-	if !hasOriginalVolumeAZTag && volumeZoneID != "" {
+	copied := copyTags(keys, values, func(k string) bool {
+		// k is already sanitized by copyTags; skip if a Velero tag already claimed this key
+		return emittedKeys[k]
+	})
+
+	for _, t := range copied {
 		result = append(result, &ecs20140526.CreateSnapshotRequestTag{
-			Key:   tea.String(originalVolumeAZTagKey),
-			Value: tea.String(volumeZoneID),
+			Key:   tea.String(t.key),
+			Value: tea.String(t.value),
 		})
+	}
+
+	// Append original volume AZ tag if not already present
+	if volumeZoneID != "" {
+		hasAZTag := false
+		for _, tag := range result {
+			if tag != nil && tea.StringValue(tag.Key) == originalVolumeAZTagKey {
+				hasAZTag = true
+				break
+			}
+		}
+		if !hasAZTag {
+			result = append(result, &ecs20140526.CreateSnapshotRequestTag{
+				Key:   tea.String(originalVolumeAZTagKey),
+				Value: tea.String(volumeZoneID),
+			})
+		}
 	}
 
 	return result
@@ -773,6 +790,12 @@ func setEBSDiskID(pv *v1.PersistentVolume, diskID string) error {
 		return nil
 	}
 	return errors.New("spec.CSI or spec.FlexVolume not found")
+}
+
+// isInvalidTagKey returns true if the tag key would be rejected by ECS Create* APIs.
+// Keys starting with "acs:" are system-reserved and cause InvalidTagKey.Malformed errors.
+func isInvalidTagKey(key string) bool {
+	return strings.HasPrefix(strings.ToLower(key), "acs:")
 }
 
 // getPerformanceLevelFromIOPS converts IOPS value to Alibaba Cloud Performance Level
