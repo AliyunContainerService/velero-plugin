@@ -36,6 +36,13 @@ const (
 	// Constants for volume ID conversion
 	OriginStr = "volumeId"
 	TargetStr = "VolumeId"
+
+	// Credential environment variable / file key names
+	envAccessKeyID     = "ALIBABA_CLOUD_ACCESS_KEY_ID"
+	envAccessKeySecret = "ALIBABA_CLOUD_ACCESS_KEY_SECRET"
+	envStsToken        = "ALIBABA_CLOUD_ACCESS_STS_TOKEN"
+	envRamRole         = "ALIBABA_CLOUD_RAM_ROLE"
+	envCredFile        = "ALIBABA_CLOUD_CREDENTIALS_FILE"
 )
 
 var validConfigKeys = []string{
@@ -47,26 +54,25 @@ var validConfigKeys = []string{
 	credFileConfigKey,
 }
 
-// loadCredentialFileFromEnv loads environment variables from a credentials file.
-// The file path can be specified either via config["credentialsFile"] or the
-// ALIBABA_CLOUD_CREDENTIALS_FILE environment variable. Config takes precedence.
-func loadCredentialFileFromEnv(config map[string]string) error {
-	var filePath string
+// getCredFilePath returns the credentials file path from config or environment.
+// Config takes precedence over ALIBABA_CLOUD_CREDENTIALS_FILE env var.
+func getCredFilePath(config map[string]string) string {
 	if config != nil && config[credFileConfigKey] != "" {
-		filePath = config[credFileConfigKey]
-	} else {
-		// Deprecated
-		filePath = os.Getenv("ALIBABA_CLOUD_CREDENTIALS_FILE")
+		return config[credFileConfigKey]
 	}
-	if filePath == "" {
-		return nil
-	}
+	// Deprecated
+	return os.Getenv(envCredFile)
+}
 
-	if err := godotenv.Overload(filePath); err != nil {
-		return errors.Wrapf(err, "error loading credientials file (%s)", filePath)
+// readCredentialFile reads credentials from a file without polluting process-wide
+// environment variables. This enables per-location credential isolation when
+// BSL and VSL reference different Kubernetes Secrets via spec.credential.
+func readCredentialFile(filePath string) (map[string]string, error) {
+	envMap, err := godotenv.Read(filePath)
+	if err != nil {
+		return nil, errors.Wrapf(err, "error loading credentials file (%s)", filePath)
 	}
-
-	return nil
+	return envMap, nil
 }
 
 // getOssEndpoint:
@@ -173,68 +179,70 @@ func veleroForAck(config map[string]string) bool {
 	return !(strings.ToLower(os.Getenv("VELERO_FOR_ACK")) == "false")
 }
 
-// getCredentials retrieves OSS credentials based on the environment and configuration.
-// It supports multiple authentication methods with the following priority order:
+// getCredentials retrieves credentials based on the environment and configuration.
+// It supports per-location credential isolation: each BSL/VSL can reference a different
+// Kubernetes Secret via spec.credential, and Velero injects the file path into the
+// config map under the credFileConfigKey key.
 //
-// 1. AccessKey credentials (highest priority):
-//   - Load from file (if ALIBABA_CLOUD_CREDENTIALS_FILE is set) and/or environment variables
-//   - Environment variables: ALIBABA_CLOUD_ACCESS_KEY_ID, ALIBABA_CLOUD_ACCESS_KEY_SECRET
-//   - Optional: ALIBABA_CLOUD_ACCESS_STS_TOKEN
-//   - If both AccessKey ID and Secret are provided, they take precedence over RAM role
+// Credential resolution priority order:
 //
-// 2. Custom RAM Role (via environment variable):
-//   - Environment variable: ALIBABA_CLOUD_RAM_ROLE
-//   - Allows specifying a custom RAM role name instead of using the ECS instance's default role
-//   - Works in both ACK and non-ACK environments
-//   - The function will use this role to obtain STS credentials via getSTSAK()
+//  1. Credentials file (per-location, highest priority):
+//     - Config key: credFileConfigKey (injected by Velero when spec.credential is set)
+//     - Fallback: envCredFile environment variable
+//     - File is read without setting process-wide env vars (isolation-safe)
+//     - File format: dotenv key=value pairs (envAccessKeyID, envAccessKeySecret, etc.)
 //
-// 3. ECS Instance RAM Role (ACK environment fallback):
-//   - For ACK environments: automatically detect the RAM role from ECS metadata
-//   - Only used if no AccessKey credentials and no custom RAM role are provided
-//   - Requires the ECS instance to have a RAM role attached
+//  2. Process environment variables (shared, lower priority):
+//     - envAccessKeyID, envAccessKeySecret
+//     - Optional: envStsToken
+//     - Only consulted when no credentials file is available
 //
-// 4. Error (non-ACK environment without credentials):
-//   - For non-ACK environments: returns error if no AccessKey and no custom RAM role are provided
+//  3. Custom RAM Role (via credentials file or environment variable):
+//     - envRamRole — custom RAM role name
+//     - Used to obtain STS credentials via ECS metadata service
 //
-// Parameters:
-//   - config: configuration map that may contain:
-//   - "credentialsFile": path to credentials file (takes precedence over ALIBABA_CLOUD_CREDENTIALS_FILE env var)
-//   - "notOnECS": if set to "true", indicates not running on ECS (affects RAM role detection)
+//  4. ECS Instance RAM Role (ACK environment fallback):
+//     - Automatically detected from ECS metadata service
+//     - Only used if no AccessKey credentials and no custom RAM role are provided
 //
-// Returns:
-//   - ossCredentials: contains accessKeyID, accessKeySecret, stsToken, and ramRole
-//   - error: if credentials cannot be obtained
+//  5. Error (non-ACK environment without any credentials)
 func getCredentials(config map[string]string) (*ossCredentials, error) {
 	cred := &ossCredentials{}
 
-	// Step 1: Load credentials from file if specified (this may set env vars)
-	if err := loadCredentialFileFromEnv(config); err != nil {
-		return nil, err
+	// Step 1: Try to load credentials from a per-location file.
+	// This does NOT set process-wide env vars, enabling BSL/VSL credential isolation.
+	if filePath := getCredFilePath(config); filePath != "" {
+		envMap, err := readCredentialFile(filePath)
+		if err != nil {
+			return nil, err
+		}
+		cred.accessKeyID = envMap[envAccessKeyID]
+		cred.accessKeySecret = envMap[envAccessKeySecret]
+		cred.stsToken = envMap[envStsToken]
+		cred.ramRole = envMap[envRamRole]
+	} else {
+		// Step 2: No credentials file — fall back to process environment variables.
+		cred.accessKeyID = os.Getenv(envAccessKeyID)
+		cred.accessKeySecret = os.Getenv(envAccessKeySecret)
+		cred.stsToken = os.Getenv(envStsToken)
+		cred.ramRole = os.Getenv(envRamRole)
 	}
 
-	// Step 2: Get credentials from environment variables
-	// These may be set by loadCredentialFileFromEnv or directly by the user
-	cred.accessKeyID = os.Getenv("ALIBABA_CLOUD_ACCESS_KEY_ID")
-	cred.accessKeySecret = os.Getenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET")
-	cred.stsToken = os.Getenv("ALIBABA_CLOUD_ACCESS_STS_TOKEN") // Token may be empty
-	cred.ramRole = os.Getenv("ALIBABA_CLOUD_RAM_ROLE")          // Custom RAM role name
-
-	// Step 3: If we have both accessKeyID and accessKeySecret, use them directly
-	// AccessKey credentials take precedence over RAM role
+	// Step 3: If we have both accessKeyID and accessKeySecret, use them directly.
+	// AccessKey credentials take precedence over RAM role.
 	if len(cred.accessKeyID) != 0 && len(cred.accessKeySecret) != 0 {
 		cred.ramRole = ""
 		return cred, nil
 	}
 
-	// Step 4: Handle RAM role authentication
-	// If no AccessKey credentials are available, try to use RAM role
+	// Step 4: Handle RAM role authentication.
+	// If no AccessKey credentials are available, try to use RAM role.
 	if !veleroForAck(config) && cred.ramRole == "" {
-		// For non-ACK environment: if no AccessKey and no custom RAM role, return error
-		return nil, errors.Errorf("ALIBABA_CLOUD_ACCESS_KEY_ID or ALIBABA_CLOUD_ACCESS_KEY_SECRET environment variable is not set")
+		return nil, errors.Errorf("%s or %s environment variable is not set", envAccessKeyID, envAccessKeySecret)
 	}
 
 	// Determine which RAM role to use:
-	// - If custom RAM role is specified via ALIBABA_CLOUD_RAM_ROLE, use it
+	// - If custom RAM role is specified (from file or env), use it
 	// - Otherwise, for ACK environment, try to get RAM role from ECS metadata
 	if cred.ramRole == "" {
 		ramRole, err := getRamRole()
