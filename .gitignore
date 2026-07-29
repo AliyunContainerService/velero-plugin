@@ -1,5 +1,6 @@
 .go
 _output
 .idea
+.agents/skills/local
 _output
 coverage.out

@@ -227,7 +227,7 @@ ALIBABA_CLOUD_ACCESS_STS_TOKEN=config-file-token
 				t.Setenv("ALIBABA_CLOUD_ACCESS_STS_TOKEN", "")
 				return nil
 			},
-			expectedError: "error loading credientials file",
+			expectedError: "error loading credentials file",
 		},
 		{
 			name:   "error: invalid credential file from config",
@@ -239,7 +239,7 @@ ALIBABA_CLOUD_ACCESS_STS_TOKEN=config-file-token
 				t.Setenv("ALIBABA_CLOUD_ACCESS_STS_TOKEN", "")
 				return nil
 			},
-			expectedError: "error loading credientials file",
+			expectedError: "error loading credentials file",
 		},
 		{
 			name:   "success: custom RAM role in non-ACK environment",
@@ -289,6 +289,9 @@ ALIBABA_CLOUD_ACCESS_STS_TOKEN=config-file-token
 				require.NoError(t, err)
 
 				t.Setenv("ALIBABA_CLOUD_CREDENTIALS_FILE", credFile)
+				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_ID", "")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_STS_TOKEN", "")
 				// Cleanup after test
 				t.Cleanup(func() {
 					os.RemoveAll(tmpDir)
@@ -298,6 +301,277 @@ ALIBABA_CLOUD_ACCESS_STS_TOKEN=config-file-token
 			// This will fail because getSTSAK requires real ECS metadata service,
 			// but it verifies that the custom RAM role from file is used
 			expectedError: "Failed to get sts token from ram role FileCustomRole",
+		},
+		// ============================================================
+		// Isolation tests: verify per-location credential separation
+		// ============================================================
+		{
+			name:   "isolation: credentialsFile does not pollute process env vars",
+			config: nil,
+			setupEnv: func(t *testing.T) map[string]string {
+				// Create a credential file with specific AK/SK
+				tmpDir, err := os.MkdirTemp("", "test-cred-isolation")
+				require.NoError(t, err)
+
+				credFile := filepath.Join(tmpDir, "credentials")
+				err = os.WriteFile(credFile, []byte(`ALIBABA_CLOUD_ACCESS_KEY_ID=file-isolated-ak
+ALIBABA_CLOUD_ACCESS_KEY_SECRET=file-isolated-sk
+`), 0644)
+				require.NoError(t, err)
+
+				// Set process env vars to different values
+				t.Setenv("ALIBABA_CLOUD_CREDENTIALS_FILE", "")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_ID", "process-env-ak")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "process-env-sk")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_STS_TOKEN", "")
+
+				t.Cleanup(func() {
+					os.RemoveAll(tmpDir)
+				})
+
+				return map[string]string{"credentialsFile": credFile}
+			},
+			validateCred: func(t *testing.T, cred *ossCredentials) {
+				// Should use file credentials, not process env
+				assert.Equal(t, "file-isolated-ak", cred.accessKeyID)
+				assert.Equal(t, "file-isolated-sk", cred.accessKeySecret)
+				// Verify process env vars were NOT overwritten
+				assert.Equal(t, "process-env-ak", os.Getenv("ALIBABA_CLOUD_ACCESS_KEY_ID"),
+					"process env vars must not be polluted by credentialsFile loading")
+				assert.Equal(t, "process-env-sk", os.Getenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET"),
+					"process env vars must not be polluted by credentialsFile loading")
+			},
+		},
+		{
+			name:   "isolation: no credentialsFile falls back to process env vars",
+			config: map[string]string{"notOnECS": "true"},
+			setupEnv: func(t *testing.T) map[string]string {
+				t.Setenv("ALIBABA_CLOUD_CREDENTIALS_FILE", "")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_ID", "fallback-ak")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "fallback-sk")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_STS_TOKEN", "")
+				return nil
+			},
+			validateCred: func(t *testing.T, cred *ossCredentials) {
+				assert.Equal(t, "fallback-ak", cred.accessKeyID)
+				assert.Equal(t, "fallback-sk", cred.accessKeySecret)
+			},
+		},
+		{
+			name:   "isolation: BSL with file-A then VSL with file-B get different credentials",
+			config: nil, // will be set per-call below
+			setupEnv: func(t *testing.T) map[string]string {
+				// This test simulates sequential BSL and VSL Init calls.
+				// We call getCredentials twice with different files and verify isolation.
+				tmpDir, err := os.MkdirTemp("", "test-bsl-vsl-isolation")
+				require.NoError(t, err)
+
+				bslFile := filepath.Join(tmpDir, "bsl-credentials")
+				err = os.WriteFile(bslFile, []byte(`ALIBABA_CLOUD_ACCESS_KEY_ID=bsl-ak
+ALIBABA_CLOUD_ACCESS_KEY_SECRET=bsl-sk
+`), 0644)
+				require.NoError(t, err)
+
+				vslFile := filepath.Join(tmpDir, "vsl-credentials")
+				err = os.WriteFile(vslFile, []byte(`ALIBABA_CLOUD_ACCESS_KEY_ID=vsl-ak
+ALIBABA_CLOUD_ACCESS_KEY_SECRET=vsl-sk
+`), 0644)
+				require.NoError(t, err)
+
+				// Clear env to ensure no interference
+				t.Setenv("ALIBABA_CLOUD_CREDENTIALS_FILE", "")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_ID", "")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_STS_TOKEN", "")
+
+				t.Cleanup(func() { os.RemoveAll(tmpDir) })
+
+				// Call BSL
+				bslCred, err := getCredentials(map[string]string{"credentialsFile": bslFile})
+				require.NoError(t, err)
+				assert.Equal(t, "bsl-ak", bslCred.accessKeyID)
+				assert.Equal(t, "bsl-sk", bslCred.accessKeySecret)
+
+				// Call VSL — must get different credentials
+				vslCred, err := getCredentials(map[string]string{"credentialsFile": vslFile})
+				require.NoError(t, err)
+				assert.Equal(t, "vsl-ak", vslCred.accessKeyID)
+				assert.Equal(t, "vsl-sk", vslCred.accessKeySecret)
+
+				// Verify env vars not polluted by either call
+				assert.Empty(t, os.Getenv("ALIBABA_CLOUD_ACCESS_KEY_ID"),
+					"env must remain empty after file-based credential loading")
+
+				// Return nil config — the actual test case assertion is done above
+				// We use validateCred=nil and no expectedError to just pass
+				return map[string]string{"notOnECS": "true", "credentialsFile": bslFile}
+			},
+			validateCred: func(t *testing.T, cred *ossCredentials) {
+				// The main assertions are in setupEnv above; this is just the final call
+				assert.Equal(t, "bsl-ak", cred.accessKeyID)
+			},
+		},
+		// ============================================================
+		// Breaking change tests: spec.credential does NOT leak to other locations
+		// ============================================================
+		{
+			name:   "breaking: BSL credentialsFile does not leak AK to VSL without file (non-ACK)",
+			config: nil,
+			setupEnv: func(t *testing.T) map[string]string {
+				// Simulate: BSL has a credentialsFile with AK/SK
+				tmpDir, err := os.MkdirTemp("", "test-no-leak")
+				require.NoError(t, err)
+
+				bslFile := filepath.Join(tmpDir, "bsl-credentials")
+				err = os.WriteFile(bslFile, []byte(`ALIBABA_CLOUD_ACCESS_KEY_ID=bsl-ak
+ALIBABA_CLOUD_ACCESS_KEY_SECRET=bsl-sk
+`), 0644)
+				require.NoError(t, err)
+
+				// Clear all env vars
+				t.Setenv("ALIBABA_CLOUD_CREDENTIALS_FILE", "")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_ID", "")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_STS_TOKEN", "")
+				t.Setenv("ALIBABA_CLOUD_RAM_ROLE", "")
+
+				t.Cleanup(func() { os.RemoveAll(tmpDir) })
+
+				// BSL Init: loads file credentials successfully
+				bslCred, err := getCredentials(map[string]string{"credentialsFile": bslFile})
+				require.NoError(t, err)
+				assert.Equal(t, "bsl-ak", bslCred.accessKeyID)
+
+				// VSL Init: no credentialsFile, no env vars, non-ACK → must FAIL
+				// (previously this would succeed by picking up BSL's leaked env vars)
+				return map[string]string{"notOnECS": "true"}
+			},
+			expectedError: "ALIBABA_CLOUD_ACCESS_KEY_ID or ALIBABA_CLOUD_ACCESS_KEY_SECRET environment variable is not set",
+		},
+		{
+			name:   "breaking: credentialsFile with partial AK only does not combine with env SK",
+			config: nil,
+			setupEnv: func(t *testing.T) map[string]string {
+				// File has only AK, env has SK — these should NOT be combined.
+				// The file path takes precedence: credentials come entirely from file.
+				tmpDir, err := os.MkdirTemp("", "test-partial-file")
+				require.NoError(t, err)
+
+				credFile := filepath.Join(tmpDir, "credentials")
+				err = os.WriteFile(credFile, []byte(`ALIBABA_CLOUD_ACCESS_KEY_ID=file-ak-only
+`), 0644)
+				require.NoError(t, err)
+
+				t.Setenv("ALIBABA_CLOUD_CREDENTIALS_FILE", "")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_ID", "")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "env-sk-should-not-combine")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_STS_TOKEN", "")
+				t.Setenv("ALIBABA_CLOUD_RAM_ROLE", "")
+
+				t.Cleanup(func() { os.RemoveAll(tmpDir) })
+
+				// When credentialsFile is used, ONLY file contents matter.
+				// Incomplete credentials (AK without SK) from file should not be
+				// supplemented by env vars — the file is authoritative for that location.
+				return map[string]string{"credentialsFile": credFile, "notOnECS": "true"}
+			},
+			// AK from file but no SK → incomplete → falls through to RAM role check → fails (non-ACK)
+			expectedError: "ALIBABA_CLOUD_ACCESS_KEY_ID or ALIBABA_CLOUD_ACCESS_KEY_SECRET environment variable is not set",
+		},
+		// ============================================================
+		// Backward compatibility: shared env var path still works
+		// ============================================================
+		{
+			name:   "compat: shared env vars work for both BSL and VSL (no credentialsFile)",
+			config: nil,
+			setupEnv: func(t *testing.T) map[string]string {
+				// Shared credential via env vars — the common case
+				t.Setenv("ALIBABA_CLOUD_CREDENTIALS_FILE", "")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_ID", "shared-ak")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "shared-sk")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_STS_TOKEN", "shared-token")
+
+				// Simulate BSL and VSL both calling getCredentials with no file
+				bslCred, err := getCredentials(map[string]string{"notOnECS": "true"})
+				require.NoError(t, err)
+				assert.Equal(t, "shared-ak", bslCred.accessKeyID)
+				assert.Equal(t, "shared-sk", bslCred.accessKeySecret)
+				assert.Equal(t, "shared-token", bslCred.stsToken)
+
+				vslCred, err := getCredentials(map[string]string{"notOnECS": "true"})
+				require.NoError(t, err)
+				assert.Equal(t, "shared-ak", vslCred.accessKeyID)
+				assert.Equal(t, "shared-sk", vslCred.accessKeySecret)
+				assert.Equal(t, "shared-token", vslCred.stsToken)
+
+				return map[string]string{"notOnECS": "true"}
+			},
+			validateCred: func(t *testing.T, cred *ossCredentials) {
+				assert.Equal(t, "shared-ak", cred.accessKeyID)
+				assert.Equal(t, "shared-sk", cred.accessKeySecret)
+				assert.Equal(t, "shared-token", cred.stsToken)
+			},
+		},
+		{
+			name:   "compat: legacy ALIBABA_CLOUD_CREDENTIALS_FILE env var still works",
+			config: nil,
+			setupEnv: func(t *testing.T) map[string]string {
+				// Legacy path: file path via env var (no config key)
+				tmpDir, err := os.MkdirTemp("", "test-legacy-env-file")
+				require.NoError(t, err)
+
+				credFile := filepath.Join(tmpDir, "credentials")
+				err = os.WriteFile(credFile, []byte(`ALIBABA_CLOUD_ACCESS_KEY_ID=legacy-file-ak
+ALIBABA_CLOUD_ACCESS_KEY_SECRET=legacy-file-sk
+`), 0644)
+				require.NoError(t, err)
+
+				t.Setenv("ALIBABA_CLOUD_CREDENTIALS_FILE", credFile)
+				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_ID", "")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_STS_TOKEN", "")
+
+				t.Cleanup(func() { os.RemoveAll(tmpDir) })
+				return nil
+			},
+			validateCred: func(t *testing.T, cred *ossCredentials) {
+				assert.Equal(t, "legacy-file-ak", cred.accessKeyID)
+				assert.Equal(t, "legacy-file-sk", cred.accessKeySecret)
+			},
+		},
+		{
+			name:   "compat: config credentialsFile takes precedence over env CREDENTIALS_FILE",
+			config: nil,
+			setupEnv: func(t *testing.T) map[string]string {
+				tmpDir, err := os.MkdirTemp("", "test-config-over-env")
+				require.NoError(t, err)
+
+				// File referenced by env var
+				envFile := filepath.Join(tmpDir, "env-credentials")
+				err = os.WriteFile(envFile, []byte(`ALIBABA_CLOUD_ACCESS_KEY_ID=env-file-ak
+ALIBABA_CLOUD_ACCESS_KEY_SECRET=env-file-sk
+`), 0644)
+				require.NoError(t, err)
+
+				// File referenced by config key (should win)
+				configFile := filepath.Join(tmpDir, "config-credentials")
+				err = os.WriteFile(configFile, []byte(`ALIBABA_CLOUD_ACCESS_KEY_ID=config-file-ak
+ALIBABA_CLOUD_ACCESS_KEY_SECRET=config-file-sk
+`), 0644)
+				require.NoError(t, err)
+
+				t.Setenv("ALIBABA_CLOUD_CREDENTIALS_FILE", envFile)
+				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_ID", "")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "")
+				t.Setenv("ALIBABA_CLOUD_ACCESS_STS_TOKEN", "")
+
+				t.Cleanup(func() { os.RemoveAll(tmpDir) })
+				return map[string]string{"credentialsFile": configFile}
+			},
+			validateCred: func(t *testing.T, cred *ossCredentials) {
+				assert.Equal(t, "config-file-ak", cred.accessKeyID)
+				assert.Equal(t, "config-file-sk", cred.accessKeySecret)
+			},
 		},
 	}
 
